@@ -61,7 +61,8 @@ class Analysis:
         checkpoints = list(args.copy or []) + [(moment, root, 'the current tree')]
         markers = re.compile(args.markers) if args.markers else None
         self.replay = Replay(root, self.project.public, checkpoints, markers, repository=self.project.git,
-                             made=self.project.made, commit_files=self.project.commit_files)
+                             made=self.project.made, commit_files=self.project.commit_files,
+                             subject_of=self.project.subject_of)
         self.units = self.replay.run(self.items, logs.lineages(ids),
                                      lambda folder: self.now if folder == root else self.project.files(folder))
 
@@ -119,6 +120,11 @@ def survey(args):
         say(f'                         {when[:16]}  {command[:70]}')
     say(f'  backups that corrected the replay  {stats["backups correcting the replay"]}')
     say(f'  commits by the agent {agent:<5} kept as they were: their cut, their message, their moment')
+    placed = sum(1 for t in r.tags if t[0] == 'tag')
+    if placed or stats['tags on a commit not found']:
+        say(f'  tags by the agent    {placed:<5} placed on the commits they named'
+            + (f', {stats["tags on a commit not found"]} on a commit git no longer has'
+               if stats['tags on a commit not found'] else ''))
     taken = stats['files taken from the commits git recorded']
     if taken:
         say(f'  files no log describes  {taken} written by a tool (a lock file...), taken from the commits git recorded')
@@ -211,12 +217,13 @@ def build_command(args):
                  '(or --draft to take the first line of each request)')
     dates = build.plan_dates(commits)
     notes = {c[0]: u['request'] for c in commits for u in a.units if u['id'] == c[0]} if args.notes else None
-    made = build.write(args.out, commits, dates, build.identity(a.project.root), notes)
+    tags = build.tags_of(a.units, commits, a.replay.tags)
+    made = build.write(args.out, commits, dates, build.identity(a.project.root), notes, tags=tags)
     last = build.tree_files(args.out)
     differ = sorted(p for p in set(last) | set(a.now) if last.get(p) != a.now.get(p))
-    print(f'{made} commits in {args.out}; the last one is the project as it stands'
-          if not differ else f'{made} commits in {args.out}; the last one differs from the project in '
-                             f'{len(differ)} files: {", ".join(differ[:8])}')
+    print(f'{made} commits and {len(build.tags(args.out))} tags in {args.out}; '
+          + ('the last commit is the project as it stands' if not differ else
+             f'the last commit differs from the project in {len(differ)} files: {", ".join(differ[:8])}'))
 
 
 def compare_histories(first, second):
@@ -233,7 +240,16 @@ def compare_histories(first, second):
         print(f'commit {i + 1}: {what} differ\n    {a[0][:70]}\n    {b[0][:70]}')
     print(f'{same} of {max(len(one), len(two))} commits identical in message and tree '
           f'({len(one)} and {len(two)} commits), dates at most {apart:.0f} s apart')
-    return 0 if same == len(one) == len(two) else 1
+    first_tags, second_tags = build.tags(first), build.tags(second)
+    names = sorted(set(first_tags) | set(second_tags))
+    for name in names:
+        if first_tags.get(name) != second_tags.get(name):
+            where = [f'commit {t[name]}' if name in t else 'none' for t in (first_tags, second_tags)]
+            print(f'tag {name}: {where[0]} and {where[1]}')
+    alike = sum(1 for n in names if first_tags.get(n) == second_tags.get(n))
+    if names:
+        print(f'{alike} of {len(names)} tags on the same commit')
+    return 0 if same == len(one) == len(two) and alike == len(names) else 1
 
 
 def compare(args):
@@ -251,7 +267,8 @@ def verify(args):
     commits, _ = build.commits_of(a.units, messages, draft=True)
     folder = tempfile.mkdtemp(prefix='divibe-')
     out = os.path.join(folder, 'rebuilt')
-    build.write(out, commits, build.plan_dates(commits), build.identity(a.project.root))
+    build.write(out, commits, build.plan_dates(commits), build.identity(a.project.root),
+                tags=build.tags_of(a.units, commits, a.replay.tags))
     status = compare_histories(a.project.root, out)
     if missing:
         print(f'{len(missing)} units with no message became draft commits: work not committed yet, '

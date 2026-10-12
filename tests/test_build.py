@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from divibe.build import commits_of, history, moment, plan_dates, tree_files, write
+from divibe.build import commits_of, history, moment, plan_dates, tags, tags_of, tree_files, version_of, write
 
 
 def unit(uid, date, changes, request='r', agent=None):
@@ -86,6 +86,35 @@ class CommitsTest(unittest.TestCase):
         self.assertEqual([(c[1], c[5]) for c in commits], [('Package', {'v': '0.3'}), ('Add b', {'b': 'b'})])
 
 
+class TagsTest(unittest.TestCase):
+    def test_the_agent_tags_and_the_versions_its_files_give(self):
+        units = [
+            unit('1', '2026-01-01T10:00:00Z', {'a': 'a'}, agent={'message': 'Add a', 'amend': False}),
+            unit('2', '2026-01-01T10:02:00Z', {'pyproject.toml': '[project]\nname = "x"\nversion = "0.3.0"\n'},
+                 agent={'message': 'Package', 'amend': False}),
+            unit('3', '2026-01-01T10:04:00Z', {'b': 'b'}, agent={'message': 'Add b', 'amend': False}),
+            unit('4', '2026-01-01T10:06:00Z', {'pyproject.toml': '[project]\nversion = "0.4.0"\n[tool.x]\n'
+                                                                'version = "9"\n'},
+                 agent={'message': 'Bump', 'amend': False}),
+        ]
+        commits, _ = commits_of(units, {})
+        events = [('tag', 1, 'v0.1', 'Add a', 'First', '2026-01-01T10:01:00.000Z'),
+                  ('tag', 3, 'v0.4.0', 'Add b', 'Moved', '2026-01-01T10:05:00.000Z'),
+                  ('tag', 3, 'v0.2', 'Add b', None, '2026-01-01T10:05:00.000Z'), ('untag', 3, 'v0.2'),
+                  # a tag can only name a commit made before it
+                  ('tag', 1, 'early', 'Add b', None, '2026-01-01T10:01:00.000Z')]
+        self.assertEqual(tags_of(units, commits, events), {
+            'v0.1': ('1', 'First', '2026-01-01T10:01:00.000Z'), 'v0.3.0': ('2', None, None),
+            'v0.4.0': ('3', 'Moved', '2026-01-01T10:05:00.000Z')})
+
+    def test_a_version_file_gives_no_version_for_a_private_package(self):
+        self.assertEqual(version_of('package.json', '{"name": "app", "version": "1.2.0"}'), '1.2.0')
+        self.assertIsNone(version_of('package.json', '{"version": "1.2.0", "private": true}'))
+        self.assertEqual(version_of('Cargo.toml', '[package]\nname = "x"\nversion = "2.0.1"\n'), '2.0.1')
+        self.assertIsNone(version_of('pyproject.toml', '[project]\nname = "x"\ndynamic = ["version"]\n'))
+        self.assertIsNone(version_of('pyproject.toml', '[project]\nversion = "0.0.0"\n'))
+
+
 class DatesTest(unittest.TestCase):
     def commit(self, key, when, group, fixed=False):
         return (key, key, moment(when), group, fixed, {})
@@ -132,6 +161,15 @@ class WriteTest(unittest.TestCase):
         rows = history(repo)
         self.assertEqual([r[0] for r in rows], ['Initial commit', 'Add b, drop a'])
         self.assertEqual(moment(rows[1][2]), moment('2026-01-01T10:10:00Z'))
+
+    def test_tags_go_on_their_commits_and_one_that_changes_nothing_is_the_one_before(self):
+        repo = os.path.join(tempfile.mkdtemp(), 'out')
+        commits = [('1', 'One', None, 'r', True, {'a.py': 'a\n'}), ('2', 'Same', None, 'r', True, {'a.py': 'a\n'}),
+                   ('3', 'Two', None, 'r', True, {'b.py': 'b\n'})]
+        dates = {k: moment(f'2026-01-01T10:0{k}:00Z') for k in '123'}
+        write(repo, commits, dates, ('Ada', 'ada@example.org'), timezone=datetime.timezone.utc,
+              tags={'v1': ('2', 'First', '2026-01-01T10:05:00.000Z'), 'v2': ('3', None, None)})
+        self.assertEqual(tags(repo), {'v1': 1, 'v2': 2})
 
 
 if __name__ == '__main__':

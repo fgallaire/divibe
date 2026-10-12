@@ -51,7 +51,7 @@ class CommandLineTest(unittest.TestCase):
         self.assertIn('0 without a message', out)
         repo = os.path.join(self.root, 'out')
         status, out = run('build', self.project, '--out', repo, *self.options)
-        self.assertIn('the last one is the project as it stands', out)
+        self.assertIn('the last commit is the project as it stands', out)
         self.assertEqual([r[0] for r in build.history(repo)], ['Add b'])
 
     def test_messages_recorded_by_rank(self):
@@ -82,6 +82,22 @@ class CommandLineTest(unittest.TestCase):
         status, out = run('verify', self.project, *self.options)
         self.assertEqual(status, 0, out)
         self.assertIn('1 of 1 commits identical', out)
+
+    def test_verify_compares_the_tags_too(self):
+        s = Session(self.root, '-app', self.project, name='later', start='2026-01-02T10:00:00')
+        s.ask('tag it')
+        s.bash('git tag -a v1.0 -m "First"')
+        s.save()
+        env = dict(os.environ, GIT_AUTHOR_NAME='A', GIT_AUTHOR_EMAIL='a@b', GIT_COMMITTER_NAME='A',
+                   GIT_COMMITTER_EMAIL='a@b')
+        subprocess.run(['git', 'add', '-A'], cwd=self.project, check=True)
+        subprocess.run(['git', 'commit', '-q', '-m', 'Add b'], cwd=self.project, check=True, env=env)
+        status, out = run('verify', self.project, *self.options)
+        self.assertIn('tag v1.0: none and commit 1', out)
+        subprocess.run(['git', 'tag', '-a', 'v1.0', '-m', 'First'], cwd=self.project, check=True, env=env)
+        status, out = run('verify', self.project, *self.options)
+        self.assertEqual(status, 0, out)
+        self.assertIn('1 of 1 tags on the same commit', out)
 
 
 if __name__ == '__main__':

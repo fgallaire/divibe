@@ -75,6 +75,23 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual([sorted(u['changes']) for u in units], [['a.py'], ['b.py'], ['c.py']])
         self.assertEqual(r.stats['agent commits'], 2)
 
+    def test_a_tag_names_its_commit_by_subject(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('git add -A && git commit -q -m "Add a"')
+        s.write(self.p('b.py'), 'b\n')
+        s.bash('git add -A && git commit -q -m "Add b" && git tag -a v2 -m "Two"')
+        s.bash('git tag v1 HEAD~1 && git tag old 1234abc && git tag gone 9999999 && git tag -d old')
+        files = [s.save()]
+        events, ids = logs.load(files)
+        items = logs.timeline(events, self.project, {})
+        r = Replay(self.project, everything, subject_of={'1234abc': 'Add a'}.get)
+        r.run(items, logs.lineages(ids), dict)
+        self.assertEqual([t[:5] for t in r.tags], [('tag', 2, 'v2', 'Add b', 'Two'), ('tag', 2, 'v1', 'Add a', None),
+                                                   ('tag', 2, 'old', 'Add a', None), ('untag', 2, 'old')])
+        self.assertEqual(r.stats['tags on a commit not found'], 1)
+
     def test_a_file_removed_by_git_rm_leaves_the_next_commit(self):
         s = self.session()
         s.ask('work')
@@ -262,6 +279,12 @@ class GitOperationsTest(unittest.TestCase):
                              '/work/app')
         self.assertEqual(ops, [('add', ['/work/app/a.py']), ('add', ['/work/app/b.py', '/work/app/lib/']),
                                ('commit', None, True, False)])
+
+    def test_tags_made_deleted_and_listed(self):
+        ops = git_operations('git tag -a v1.0 -m "One" abc1234 && git tag v2 && git tag -d v1.0 v2 && git tag -l "v*"'
+                             ' && git tag', '/work/app', '/work/app')
+        self.assertEqual(ops, [('tag', 'v1.0', 'abc1234', 'One'), ('tag', 'v2', None, None),
+                               ('untag', 'v1.0'), ('untag', 'v2')])
 
     def test_a_rebase_squashing_fixups_with_the_environment_set_before_it(self):
         ops = git_operations('GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash main && git rebase main',

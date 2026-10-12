@@ -10,13 +10,20 @@ A commit is dated when its work ended. A commit the agent made keeps the
 moment it was made. The others of one request are spread out after their
 work, minutes apart as a person commits them one after the other, and
 before the first commit of the next request; no two commits share a second.
+
+A tag the agent made goes on the commit it named. A version file at the
+root (pyproject.toml, package.json, Cargo.toml) tags v<version> the commit
+where that version first appears, unless the agent placed that tag itself.
 """
 import datetime
 import hashlib
+import json
 import os
+import re
 import subprocess
 
 SECOND = datetime.timedelta(seconds=1)
+VERSION_FILES = {'pyproject.toml': r'project|tool\.poetry', 'package.json': None, 'Cargo.toml': r'package'}
 
 
 def moment(text):
@@ -110,6 +117,49 @@ def commits_of(units, messages, draft=False):
     return commits, missing
 
 
+def version_of(path, content):
+    """The version a version file gives, None if none: a package.json marked
+    private is never released, and 0.0.0 is no version."""
+    if content is None:
+        return None
+    if path == 'package.json':
+        try:
+            data = json.loads(content)
+        except ValueError:
+            return None
+        version = data.get('version') if isinstance(data, dict) and not data.get('private') else None
+    else:
+        section = re.search(r'^\[(?:%s)\][ \t]*$(.*?)(?=^\[|\Z)' % VERSION_FILES[path], content, re.M | re.S)
+        found = section and re.search(r'^version\s*=\s*["\']([^"\']+)["\']', section.group(1), re.M)
+        version = found.group(1) if found else None
+    return version if isinstance(version, str) and version != '0.0.0' else None
+
+
+def tags_of(units, commits, events):
+    """The tags of the history, by name: (commit key, message, moment). The
+    agent's own, from the replay's events, on the last commit made before
+    the tag that has the subject named; then those of the version files."""
+    position = {u['id']: i for i, u in enumerate(units)}
+    tags = {}
+    for event in events:
+        if event[0] == 'untag':
+            tags.pop(event[2], None)
+            continue
+        _, before, name, subject, message, when = event
+        found = [c for c in commits if position.get(c[0], len(units)) < before and c[1].split('\n')[0] == subject]
+        if found:
+            tags[name] = (found[-1][0], message, when)
+    current = None
+    for key, _, _, _, _, changes in commits:
+        for path in VERSION_FILES:
+            if path in changes:
+                version = version_of(path, changes[path])
+                if version and version != current:
+                    current = version
+                    tags.setdefault('v' + version, (key, None, None))
+    return tags
+
+
 def plan_dates(commits):
     """The moment of each commit, by key."""
     groups = []
@@ -158,17 +208,21 @@ def identity(project_root):
     return ask('user.name') or 'Divibe', ask('user.email') or 'divibe@localhost'
 
 
-def write(repo, commits, dates, author, notes=None, timezone=None):
+def write(repo, commits, dates, author, notes=None, timezone=None, tags=None):
     """Writes the commits into a new repository. notes, by key, are attached
-    as git notes. Returns how many commits were made."""
+    as git notes; tags are those of tags_of. Returns how many commits were
+    made."""
     os.makedirs(repo, exist_ok=True)
     if os.listdir(repo):
         raise SystemExit(f'{repo} is not empty')
     git(repo, 'init', '-q', '-b', 'main')
     git(repo, 'config', 'user.name', author[0])
     git(repo, 'config', 'user.email', author[1])
-    made = 0
+    made, heads = 0, {}
     for key, message, _, _, _, changes in commits:
+        if made:
+            # a commit that changes nothing is the one before it
+            heads[key] = git(repo, 'rev-parse', 'HEAD').strip()
         for path, content in changes.items():
             target = os.path.join(repo, path)
             if content is None:
@@ -188,6 +242,16 @@ def write(repo, commits, dates, author, notes=None, timezone=None):
         if notes and notes.get(key):
             git(repo, 'notes', 'add', '-F', '-', 'HEAD', env=env, input=notes[key])
         made += 1
+        heads[key] = git(repo, 'rev-parse', 'HEAD').strip()
+    for name, (key, message, when) in sorted((tags or {}).items()):
+        if key not in heads:
+            continue
+        if message is None:
+            git(repo, 'tag', name, heads[key])
+            continue
+        when = moment(when).astimezone(timezone).isoformat(timespec='seconds') if when else None
+        env = dict(os.environ, GIT_COMMITTER_DATE=when) if when else None
+        git(repo, 'tag', '-a', name, '-F', '-', heads[key], env=env, input=message)
     return made
 
 
@@ -209,3 +273,15 @@ def history(repo):
         tree, date, message = record.split('\0', 2)
         rows.append((message.strip(), tree, date))
     return rows
+
+
+def tags(repo):
+    """The tags of a repository, by name: the rank of the commit each one is
+    on, the first commit being 1 (0 for one off the history)."""
+    rank = {h: i + 1 for i, h in enumerate(git(repo, 'rev-list', '--reverse', 'HEAD').split())}
+    out = git(repo, 'for-each-ref', 'refs/tags', '--format=%(refname:short)%00%(objectname)%00%(*objectname)')
+    found = {}
+    for line in out.splitlines():
+        name, target, peeled = line.split('\0')
+        found[name] = rank.get(peeled or target, 0)
+    return found

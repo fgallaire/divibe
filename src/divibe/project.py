@@ -153,6 +153,12 @@ class Project:
             for p in todo:
                 self._verdicts[p] = not self.rules.ignored(p)
 
+    def subject_of(self, revision):
+        """The subject of the commit a revision names, if git still has it."""
+        out = subprocess.run(['git', 'log', '-1', '--format=%s', revision, '--'], cwd=self.root,
+                             capture_output=True, text=True, check=False)
+        return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
+
     def commit_files(self, commit, leave=()):
         """The files of one of the project's commits that belong in its
         history, but those in leave, with their content."""

@@ -60,10 +60,10 @@ def utc(unix):
 
 
 def git_operations(command, cwd, root):
-    """What a command line run in the project stages, commits and squashes:
-    ('add', paths or None for everything) for `git add`, `git rm` and
-    `git mv`, ('commit', message, amend, all_tracked) and ('autosquash',)
-    for `git rebase --autosquash`, in order."""
+    """What a command line run in the project stages, commits, squashes and
+    tags: ('add', paths or None for everything) for `git add`, `git rm` and
+    `git mv`, ('commit', message, amend, all_tracked), ('autosquash',) for
+    `git rebase --autosquash`, and those of tag_operations, in order."""
     found = []
     here = cwd
     for part in re.split(r'\s*(?:;|&&|\|\||\n)\s*', command):
@@ -115,7 +115,38 @@ def git_operations(command, cwd, root):
             found.append(('commit', message, amend, every))
         elif args[0] == 'rebase' and '--autosquash' in args:
             found.append(('autosquash',))
+        elif args[0] == 'tag':
+            found += tag_operations(args[1:])
     return found
+
+
+LISTING = ('-l', '--list', '-v', '--verify', '-n', '--contains', '--no-contains', '--points-at', '--sort',
+           '--format', '--merged', '--no-merged')
+
+
+def tag_operations(args):
+    """`git tag`: ('tag', name, revision or None, message or None) for a tag
+    made, ('untag', name) for each one deleted, nothing for a listing."""
+    if any(a in ('-d', '--delete') for a in args):
+        return [('untag', a) for a in args if not a.startswith('-')]
+    if any(a.split('=')[0] in LISTING or re.fullmatch(r'-n\d+', a) for a in args):
+        return []
+    names, message, i = [], None, 0
+    while i < len(args):
+        a = args[i]
+        if (a in ('-m', '--message') or re.fullmatch(r'-[a-zA-Z]*m', a)) and i + 1 < len(args):
+            message = args[i + 1] if message is None else message + '\n\n' + args[i + 1]
+            i += 2
+            continue
+        if a in ('-F', '--file', '-u', '--local-user') and i + 1 < len(args):
+            i += 2
+            continue
+        if a.startswith('--message='):
+            message = a.split('=', 1)[1]
+        elif not a.startswith('-'):
+            names.append(a)
+        i += 1
+    return [('tag', names[0], names[1] if len(names) > 1 else None, message)] if names else []
 
 
 class Replay:
@@ -127,10 +158,15 @@ class Replay:
     finds in what the agent says the defect it moves to. made, from the
     project's reflog, are the commits git records: (unix time, amend,
     subject, hash); commit_files(hash, leave) gives the files of one of them
-    but those in leave."""
+    but those in leave; subject_of(revision) the subject of the commit a
+    revision names.
+
+    tags are the agent's `git tag`s, in order: ('tag', units closed before
+    it, name, subject of the commit it names, message, moment) and ('untag',
+    units closed before it, name)."""
 
     def __init__(self, root, public, checkpoints=(), markers=None, repository=True, made=(),
-                 commit_files=None):
+                 commit_files=None, subject_of=None):
         self.root = root.rstrip('/')
         self.public = public
         # a `git commit` in a folder that is no repository did nothing, even
@@ -138,10 +174,14 @@ class Replay:
         self.repository = repository
         self.made = list(made)
         self.commit_files = commit_files
+        self.subject_of = subject_of
         # the files known from git only, until the logs write them
         self.from_git = set()
         # the units of `git commit --fixup` a rebase has yet to squash
         self.fixups = []
+        # the subjects of the agent's commits, HEAD last
+        self.heads = []
+        self.tags = []
         self.tree = Tree(self.root, Tracked())
         self.committed = {}
         self.units = []
@@ -219,6 +259,11 @@ class Replay:
         unit['agent'] = {'message': message or '', 'amend': amend}
         if unit['agent']['message'].startswith('fixup! '):
             self.fixups.append(unit['agent'])
+        subject = (message or '').split('\n')[0]
+        if not amend or not self.heads:
+            self.heads.append(subject)
+        elif subject:
+            self.heads[-1] = subject
         unit['end'] = moment
         if self.stage_all:
             paths = {p for p in set(self.tree.files) | set(self.committed)
@@ -318,6 +363,15 @@ class Replay:
                     for agent in self.fixups:
                         agent['squashed'] = True
                     self.fixups = []
+                    self.heads = [h for h in self.heads if not h.startswith('fixup! ')]
+                elif op[0] == 'tag':
+                    subject = self.named(op[2])
+                    if subject is None:
+                        self.stats['tags on a commit not found'] += 1
+                    else:
+                        self.tags.append(('tag', len(self.units), op[1], subject, op[3], moment))
+                elif op[0] == 'untag':
+                    self.tags.append(('untag', len(self.units), op[1]))
                 else:
                     self.stats['agent commits'] += 1
                     self.agent_commit(session, op[4], op[1], op[2], op[3], op[5])
@@ -325,6 +379,15 @@ class Replay:
         for when, folder, name in marks:
             self.checkpoint(when, folder, name, read_copy(folder))
         return self.units
+
+    def named(self, revision):
+        """The subject of the commit a revision names: HEAD and its ancestors
+        as the replay made them, anything else as the project's git knows it."""
+        m = re.fullmatch(r'HEAD((?:[~^]\d*)*)|@', revision or 'HEAD')
+        if m:
+            back = sum(int(s[1:] or 1) if s[0] == '~' else 1 for s in re.findall(r'[~^]\d*', m.group(1) or ''))
+            return self.heads[-1 - back] if back < len(self.heads) else None
+        return self.subject_of(revision) if self.subject_of else None
 
     def made_by(self, ops, start, ended, failed):
         """The git operations of a command that took effect, each commit with

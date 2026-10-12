@@ -105,6 +105,14 @@ one and a half to five and a half minutes apart, as a person commits them one
 after the other, and all before the first commit of the next request. No
 commit is dated before its work, and no two share a second.
 
+## Tags
+
+A tag the agent made with `git tag` goes on the commit it named, and one it
+deleted is gone. A version file at the root (`pyproject.toml`, `package.json`,
+`Cargo.toml`) tags `v<version>` the commit where that version first appears,
+unless the agent placed that tag itself; a `package.json` marked private is
+never released, so it tags nothing.
+
 ## For the best history
 
 - **Let the agent commit as it goes.** Its commits are kept as they are, and
