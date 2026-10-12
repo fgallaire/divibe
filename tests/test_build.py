@@ -49,6 +49,15 @@ class CommitsTest(unittest.TestCase):
         self.assertEqual([(c[1], c[5]) for c in commits], [('Add a', {'a': 'a2'})])
         self.assertEqual(commits[0][2], moment('2026-01-01T10:00:00Z'))
 
+    def test_an_amend_with_no_message_folds_back_even_with_a_commit_after_it(self):
+        units = [
+            unit('1', '2026-01-01T10:00:00Z', {'a': 'a'}, agent={'message': 'Add a', 'amend': False}),
+            unit('2', '2026-01-01T10:02:00Z', {'a': 'a2'}, agent={'message': None, 'amend': True}),
+            unit('3', '2026-01-01T10:04:00Z', {'b': 'b'}, agent={'message': 'Add b', 'amend': False}),
+        ]
+        commits, _ = commits_of(units, {})
+        self.assertEqual([(c[1], c[5]) for c in commits], [('Add a', {'a': 'a2'}), ('Add b', {'b': 'b'})])
+
 
 class DatesTest(unittest.TestCase):
     def commit(self, key, when, group, fixed=False):

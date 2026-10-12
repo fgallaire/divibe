@@ -23,10 +23,15 @@ def moment(text):
 
 
 def message_of(unit, messages):
+    """The message recorded for a unit, else the agent's own; '' for an amend
+    that keeps the message it amends; None where one is needed."""
     if unit['id'] in messages:
         return messages[unit['id']]
-    if unit.get('agent') and unit['agent'].get('message'):
-        return unit['agent']['message']
+    agent = unit.get('agent')
+    if agent and agent.get('message'):
+        return agent['message']
+    if agent and agent.get('amend'):
+        return ''
     return None
 
 
