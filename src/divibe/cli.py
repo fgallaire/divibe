@@ -1,6 +1,15 @@
-"""The command line: survey, units, messages, build, compare, verify."""
+"""The command line.
+
+    divibe PROJECT            the report, then the history in PROJECT-divibe
+    divibe -n PROJECT         the report alone: a dry run writes nothing
+    divibe --verify PROJECT   rebuild a git project's history and compare it with its own
+
+When commits need a message, divibe PROJECT writes them in a file next to
+the project, PROJECT-divibe-messages.txt, and stops: the next run reads it.
+"""
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -10,14 +19,6 @@ import tempfile
 from . import build, codex, logs, opencode
 from .project import Project
 from .replay import Replay
-
-CACHE = os.path.expanduser('~/.cache/divibe')
-
-
-def state_dir(root, given=None):
-    folder = given or os.path.join(CACHE, re.sub(r'[^A-Za-z0-9]', '-', root))
-    os.makedirs(folder, exist_ok=True)
-    return folder
 
 
 def retention():
@@ -76,6 +77,14 @@ class Analysis:
                              made=self.project.made, commit_files=self.project.commit_files,
                              subject_of=self.project.subject_of)
         self.units = self.replay.run(self.items, lines, self.read_copy)
+        # the project as the agent found it is a commit of its own, never
+        # folded into the agent's first one
+        self.given = {u['id']: f'The project before the agent, as in commit {self.base[:7]}' for u in self.units
+                      if self.base and u['session'] == 'copy' and u['request'].endswith('commit ' + self.base[:7])}
+
+    def messages(self):
+        """The messages of the units: those written in the file, else given."""
+        return dict(self.given, **read_messages(messages_path(self.project.root), self.units))
 
     def read_copy(self, folder):
         if folder == self.project.root:
@@ -94,13 +103,12 @@ def common(parser):
     parser.add_argument('--backups', default=logs.BACKUPS, help=argparse.SUPPRESS)
     parser.add_argument('--codex', default=codex.HOME, help=argparse.SUPPRESS)
     parser.add_argument('--opencode', default=opencode.DATABASE, help=argparse.SUPPRESS)
-    parser.add_argument('--state', help='where units and messages are kept (default under ~/.cache/divibe)')
 
 
-# --- survey ----------------------------------------------------------------
+# --- the report ------------------------------------------------------------
 
-def survey(args):
-    a = Analysis(args)
+def report(a, recorded):
+    """What the logs hold, the quality to expect, and the commits to come."""
     r = a.replay
     stats = r.stats
     root = a.project.root
@@ -118,7 +126,7 @@ def survey(args):
     unknown = stats['shell commands not replayed']
     out = []
     say = out.append
-    say(f'Divibe survey of {a.project.root}')
+    say(f'Divibe: {a.project.root}')
     say('')
     say('Sources')
     span = f', {moments[0][:16].replace("T", " ")} to {moments[-1][:16].replace("T", " ")} UTC' if moments else ''
@@ -179,82 +187,107 @@ def survey(args):
                                  'project from the past (--copy FOLDER@MOMENT) make it better.')
     say(f'Expected quality: {grade}')
     say(f'  {why}')
-    need = sum(1 for u in a.units if not u.get('agent'))
+    effective = build.effective_messages(a.units, recorded)
+    need = sum(1 for m in effective.values() if m is None)
+    commits = build.commits_of(a.units, recorded, draft=True)[0]
     say('')
-    say(f'Units: {len(a.units)}, {agent} with the agent\'s own message, {need} needing one '
-        f'(divibe units, then divibe messages).')
-    print('\n'.join(out))
+    say(f'History: {len(commits)} commits, {sum(1 for c in commits if c[4])} of them made by the agent'
+        + (f'; {need} need a message' if need else '') + '.')
+    return '\n'.join(out)
 
 
-# --- units and messages ----------------------------------------------------
+# --- the messages to write -------------------------------------------------
 
-def units(args):
-    a = Analysis(args)
-    folder = state_dir(a.project.root, args.state)
-    messages = load_messages(folder)
-    with open(os.path.join(folder, 'units.jsonl'), 'w', encoding='utf-8') as f:
-        for u in a.units:
-            row = {k: v for k, v in u.items() if k != 'changes'}
-            f.write(json.dumps(row, ensure_ascii=False) + '\n')
-    shown = 0
-    effective = build.effective_messages(a.units, messages)
-    for rank, u in enumerate(a.units):
-        message = effective[u['id']]
-        if args.todo and message is not None:
-            continue
-        files = ' '.join(f'{p} +{s[0]}/-{s[1]}' for p, s in u['stat'].items())
-        print(f"[{rank}] {u['date'][:16]} {message!r}")
-        print(f"    files: {files[:args.width]}")
-        print(f"    asked: {' '.join(u['request'].split())[:args.width]}")
-        print(f"    said:  {' '.join(u['summary'].split())[:args.width]}")
-        shown += 1
-    print(f'{len(a.units)} units in {folder}' + (f', {shown} without a message' if args.todo else ''))
+HEADER = '''# The commits of {root} that need a message.
+# Write each message after its key: the request it comes from is filled in.
+# Then run divibe again, and it writes the history. A message "+" puts the
+# work into the next commit, "-" leaves it out.
+'''
 
 
-def load_messages(folder):
-    path = os.path.join(folder, 'messages.json')
-    if os.path.exists(path):
-        with open(path, encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+def messages_path(root):
+    """The file of the messages to write, next to the project."""
+    return root.rstrip('/') + '-divibe-messages.txt'
 
 
-def messages(args):
-    folder = state_dir(os.path.realpath(args.project), args.state)
-    with open(os.path.join(folder, 'units.jsonl'), encoding='utf-8') as f:
-        ids = [json.loads(line)['id'] for line in f]
-    kept = load_messages(folder)
-    added = 0
-    with open(args.file, encoding='utf-8') as f:
+def keys(units):
+    """A short key for each unit, the same from one run to the next."""
+    for size in range(6, 33, 2):
+        found = {u['id']: hashlib.md5(u['id'].encode()).hexdigest()[:size] for u in units}
+        if len(set(found.values())) == len(found):
+            break
+    return found
+
+
+def read_messages(path, units):
+    """The messages written in the file, by unit."""
+    if not os.path.exists(path):
+        return {}
+    ids = {key: uid for uid, key in keys(units).items()}
+    found = {}
+    with open(path, encoding='utf-8') as f:
         for line in f:
-            if not line.strip():
-                continue
-            rank, message = line.rstrip('\n').split('\t', 1)
-            kept[ids[int(rank)]] = message.strip()
-            added += 1
-    with open(os.path.join(folder, 'messages.json'), 'w', encoding='utf-8') as f:
-        json.dump(kept, f, ensure_ascii=False, indent=1)
-    print(f'{added} messages recorded, {sum(1 for i in ids if i in kept)} of {len(ids)} units have one')
+            m = re.match(r'([0-9a-f]{6,32})[ \t]+(\S.*?)\s*$', line)
+            if m and m.group(1) in ids:
+                found[ids[m.group(1)]] = m.group(2)
+    return found
 
 
-# --- build and compare -----------------------------------------------------
+def write_messages(path, root, units, recorded, effective):
+    """The file: the messages already written, and for each commit that
+    needs one the first line of its request, with what the commit holds."""
+    key = keys(units)
+    rows = [HEADER.format(root=root)]
+    for u in units:
+        if u['id'] not in recorded and effective[u['id']] is not None:
+            continue
+        asked = ' '.join(u['request'].split())
+        message = recorded.get(u['id']) or u['request'].strip().split('\n')[0][:72] or 'Work'
+        rows.append(f'\n{key[u["id"]]}  {message}\n')
+        rows.append(f'#  {u["date"][:16].replace("T", " ")} UTC, asked: {asked[:90]}\n')
+        if u['summary'].strip():
+            rows.append(f'#  the agent said: {" ".join(u["summary"].split())[:100]}\n')
+        rows.append('#  files: ' + ', '.join(f'{p} +{s[0]}/-{s[1]}' for p, s in u['stat'].items())[:110] + '\n')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.writelines(rows)
 
-def build_command(args):
+
+# --- divibe PROJECT ----------------------------------------------------------
+
+def run(args):
+    """The report, then the history, unless it is a dry run or commits need
+    a message; or, with --verify, the comparison."""
     a = Analysis(args)
-    folder = state_dir(a.project.root, args.state)
-    commits, missing = build.commits_of(a.units, load_messages(folder), draft=args.draft)
-    if missing:
-        sys.exit(f'{len(missing)} units have no message: divibe units --todo, then divibe messages '
-                 '(or --draft to take the first line of each request)')
-    dates = build.plan_dates(commits)
+    if args.verify:
+        return verify(a)
+    path = messages_path(a.project.root)
+    recorded = a.messages()
+    print(report(a, recorded))
+    if args.dry_run:
+        return 0
+    effective = build.effective_messages(a.units, recorded)
+    need = sum(1 for m in effective.values() if m is None)
+    if need:
+        write_messages(path, a.project.root, a.units, recorded, effective)
+        print(f'\n{need} commits need a message: they are in {path}.\n'
+              'Correct them as you like, then run divibe again.')
+        return 0
+    out = os.path.abspath(args.out) if args.out else a.project.root + '-divibe'
+    if os.path.exists(out) and os.listdir(out):
+        sys.exit(f'{out} already exists: remove it, or give another folder with --out')
+    commits, _ = build.commits_of(a.units, recorded)
     notes = {c[0]: u['request'] for c in commits for u in a.units if u['id'] == c[0]} if args.notes else None
     tags = build.tags_of(a.units, commits, a.replay.tags)
-    made = build.write(args.out, commits, dates, build.identity(a.project.root), notes, tags=tags)
-    last = build.tree_files(args.out)
+    made = build.write(out, commits, build.plan_dates(commits), build.identity(a.project.root), notes, tags=tags)
+    last = build.tree_files(out)
     differ = sorted(p for p in set(last) | set(a.now) if last.get(p) != a.now.get(p))
-    print(f'{made} commits and {len(build.tags(args.out))} tags in {args.out}; '
+    print(f'\n{made} commits and {len(build.tags(out))} tags in {out}; '
           + ('the last commit is the project as it stands' if not differ else
              f'the last commit differs from the project in {len(differ)} files: {", ".join(differ[:8])}'))
+    return 0
+
+
+# --- divibe --verify PROJECT -------------------------------------------------
 
 
 def compare_histories(first, second):
@@ -283,17 +316,12 @@ def compare_histories(first, second):
     return 0 if same == len(one) == len(two) and alike == len(names) else 1
 
 
-def compare(args):
-    return compare_histories(args.first, args.second)
-
-
-def verify(args):
+def verify(a):
     """Rebuilds a project's history from the logs, in a temporary folder, and
     compares it with the project's own git history."""
-    a = Analysis(args)
     if not a.project.git:
         sys.exit(f'{a.project.root} has no git history to compare with')
-    messages = load_messages(state_dir(a.project.root, args.state))
+    messages = a.messages()
     missing = build.commits_of(a.units, messages)[1]
     commits, _ = build.commits_of(a.units, messages, draft=True)
     folder = tempfile.mkdtemp(prefix='divibe-')
@@ -311,33 +339,15 @@ def verify(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='divibe',
-        description="A true git history for a project written with an AI agent, rebuilt from the agent's own records.")
-    sub = parser.add_subparsers(dest='command', required=True)
-    p = sub.add_parser('survey', help='what the logs hold, and the quality to expect')
-    common(p)
-    p.set_defaults(run=survey)
-    p = sub.add_parser('units', help='the units of work, to write their messages')
-    common(p)
-    p.add_argument('--todo', action='store_true', help='only the units with no message')
-    p.add_argument('--width', type=int, default=160)
-    p.set_defaults(run=units)
-    p = sub.add_parser('messages', help='record messages: a file of RANK<TAB>MESSAGE lines')
-    p.add_argument('project')
-    p.add_argument('file')
-    p.add_argument('--state')
-    p.set_defaults(run=messages)
-    p = sub.add_parser('build', help='write the history into a new repository')
-    common(p)
-    p.add_argument('--out', required=True, help='the new repository, a folder that does not exist yet')
-    p.add_argument('--draft', action='store_true', help='a unit with no message takes its request\'s first line')
-    p.add_argument('--notes', action='store_true', help='attach each commit\'s request as a git note')
-    p.set_defaults(run=build_command)
-    p = sub.add_parser('compare', help='compare two histories, commit by commit')
-    p.add_argument('first')
-    p.add_argument('second')
-    p.set_defaults(run=compare)
-    p = sub.add_parser('verify', help='rebuild a git project\'s history from the logs and compare it with its own')
-    common(p)
-    p.set_defaults(run=verify)
-    args = parser.parse_args(argv)
-    return args.run(args) or 0
+        description="A true git history for a project written with an AI agent, rebuilt from the agent's own "
+                    "records: what they hold and the quality to expect, then the history in PROJECT-divibe, next "
+                    "to the project.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('-n', '--dry-run', action='store_true', help='say what the history would be, and write nothing')
+    mode.add_argument('--verify', action='store_true',
+                      help='for a project already in git: rebuild its history in a temporary folder and compare it '
+                           'with its own, commit by commit')
+    common(parser)
+    parser.add_argument('--out', help='the new repository (default: PROJECT-divibe, next to the project)')
+    parser.add_argument('--notes', action='store_true', help="attach each commit's request as a git note")
+    return run(parser.parse_args(argv)) or 0

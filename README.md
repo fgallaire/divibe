@@ -16,22 +16,24 @@ the last commit is the project as it stands, checked file by file.
 ```sh
 uv tool install git+https://github.com/fgallaire/divibe
 
-divibe survey PROJECT                  # what the logs hold, and the quality to expect
-divibe units PROJECT --todo            # the units of work still needing a message
-divibe messages PROJECT messages.tsv   # record them: RANK<TAB>MESSAGE per line
-divibe build PROJECT --out REPO        # write the history into a new repository
-divibe verify PROJECT                  # rebuild a git project's history and compare it with its own
+divibe -n PROJECT         # a dry run: what the logs hold and the quality to expect, nothing written
+divibe PROJECT            # the same, then the history in PROJECT-divibe, next to the project
+divibe --verify PROJECT   # for a project already in git: rebuild its history and compare it with its own
 ```
 
-Or once, without installing it: `uvx --from git+https://github.com/fgallaire/divibe divibe survey PROJECT`.
+When commits need a message, `divibe PROJECT` writes them in
+`PROJECT-divibe-messages.txt` and stops: correct them, run it again.
+
+Or once, without installing it: `uvx --from git+https://github.com/fgallaire/divibe divibe -n PROJECT`.
 From a clone, `uv run divibe` does the same.
 
 Python 3.10 or later, and no dependency. Divibe reads the logs and writes only
-the new repository and its own state, under `~/.cache/divibe/`.
+the new repository and the file of messages, next to the project.
 
-## What the survey checks
+## What Divibe checks first
 
-`divibe survey PROJECT` reads everything before writing anything, and says:
+`divibe PROJECT` reads everything before writing anything, and says, as
+`divibe -n PROJECT` does without writing:
 
 **The sources.**
 
@@ -40,7 +42,7 @@ the new repository and its own state, under `~/.cache/divibe/`.
   time whichever agent wrote them.
   - Claude Code's, in `~/.claude/projects/`. Claude Code deletes logs older
     than `cleanupPeriodDays` (30 days unless `~/.claude/settings.json` says
-    otherwise): the survey warns when that is short.
+    otherwise): Divibe warns when that is short.
   - Codex CLI's, in `~/.codex/sessions/` and `~/.codex/archived_sessions/`.
   - OpenCode's, in its database `~/.local/share/opencode/opencode.db`, read
     only. A subagent's session is part of its parent's work.
@@ -87,13 +89,27 @@ to expect:
 
 A unit is the work of one request. Its commit message comes from, in order:
 
-1. the messages you recorded with `divibe messages`;
-2. the agent's own `git commit -m`, for the units that end with one;
-3. nothing: `build` stops and names the units, unless `--draft` is given, which
-   takes the first line of each request.
+1. the file of messages, `PROJECT-divibe-messages.txt`;
+2. the agent's own `git commit -m`, for the units that end with one.
 
 When the agent committed, its commits are the history: work cut off before
 one of them, by a new request or a session that ended, goes into it.
+
+The other units need a message. `divibe PROJECT` writes them in the file and
+stops, each on a line of its own after a short key, filled in with the first
+line of its request; below it, what was asked, what the agent said it did,
+and the files it changed:
+
+```
+3f9a1c  fais le module de rejeu
+#  2026-10-12 13:24 UTC, asked: fais le module de rejeu, avec les tests
+#  the agent said: The replay module is in place, with its tests.
+#  files: replay.py +120/-0, tests/test_replay.py +45/-0
+```
+
+Correct the messages, run `divibe PROJECT` again, and it writes the history.
+The keys stay the same from one run to the next, so the file keeps its
+messages when new sessions add units.
 
 A message can also be `+`, which folds the unit into the next one that has a
 message (a chain of fixes of one defect becomes one commit), or `-`, which
@@ -124,7 +140,7 @@ never released, so it tags nothing.
 ## For the best history
 
 - **Let the agent commit as it goes.** Its commits are kept as they are, and
-  `divibe verify` proves the logs reproduce them.
+  `divibe --verify` proves the logs reproduce them.
 - **Let the agent change files with its own tools**, not shell commands: those
   are replayed exactly.
 - **Change no file by hand while the agent works**, or tell it to commit
@@ -143,12 +159,12 @@ changes land on the in-memory tree. While it runs, an audit hook refuses
 anything that would write a file, remove or rename one, start a program or
 open a connection, whichever function the script uses. A replay changes
 nothing on the machine; the only files Divibe writes are the new repository
-and its own state.
+and the file of messages, and `divibe -n` writes none.
 
 ## Validation
 
-Divibe was written with Claude Code, committing as it went, and `divibe verify`
-rebuilds its history from the logs of that work: every commit identical in
+Divibe was written with Claude Code, committing as it went, and
+`divibe --verify` rebuilds its history from the logs of that work: every commit identical in
 message and tree, including amended ones, one by a command that failed after
 it, fixups squashed into older commits, and a rewrite that removed compiled
 files committed by mistake, with the same dates to the second; and its tags
