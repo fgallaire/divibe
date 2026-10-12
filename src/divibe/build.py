@@ -4,7 +4,8 @@ A unit's message comes from the messages file, or, for a commit the agent
 made, from the agent. A message `+` folds the unit into the next one that
 has a message; `-` drops a unit a later one takes back. An amend the agent
 made folds into the commit before it, and a `--fixup` commit a rebase with
-`--autosquash` squashed folds into the commit it names.
+`--autosquash` squashed folds into the commit it names. Commits that
+`git reset --soft` took back go into the next commit.
 
 A commit is dated when its work ended. A commit the agent made keeps the
 moment it was made. The others of one request are spread out after their
@@ -76,6 +77,12 @@ def commits_of(units, messages, draft=False):
     effective = effective_messages(units, messages)
     for unit in units:
         message = effective[unit['id']]
+        # `git reset --soft HEAD~n` took the last commits back: their work
+        # goes into this one
+        restored = {}
+        for _ in range(min((unit.get('agent') or {}).get('uncommit', 0), len(commits))):
+            restored = {**commits.pop()[5], **restored}
+        pending = {**restored, **pending}
         if unit.get('agent') and unit['agent'].get('amend') and commits and message in (None, ''):
             message = commits[-1][1]
         if message is None:

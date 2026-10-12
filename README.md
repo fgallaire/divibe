@@ -14,18 +14,18 @@ It never invents work. A commit holds what the logs show was changed, and
 the last commit is the project as it stands, checked file by file.
 
 ```sh
-uv tool install git+https://github.com/fgallaire/divibe
+uv tool install divibe     # or: pip install divibe
 
-divibe -n PROJECT         # a dry run: what the logs hold and the quality to expect, nothing written
-divibe PROJECT            # the same, then the history in PROJECT-divibe, next to the project
+divibe PROJECT            # what the logs hold and the quality to expect, then the history in PROJECT-divibe
+divibe -n PROJECT         # a dry run: the same, with nothing written
 divibe --verify PROJECT   # for a project already in git: rebuild its history and compare it with its own
 ```
 
 When commits need a message, `divibe PROJECT` writes them in
 `PROJECT-divibe-messages.txt` and stops: correct them, run it again.
 
-Or once, without installing it: `uvx --from git+https://github.com/fgallaire/divibe divibe -n PROJECT`.
-From a clone, `uv run divibe` does the same.
+Or once, without installing it: `uvx divibe -n PROJECT`. From a clone,
+`uv run divibe` does the same.
 
 Python 3.10 or later, and no dependency. Divibe reads the logs and writes only
 the new repository and the file of messages, next to the project.

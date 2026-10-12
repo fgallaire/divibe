@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from divibe import logs
+from divibe.build import commits_of
 from divibe.replay import Replay, git_operations, seconds
 from tests.fake import Session
 
@@ -91,6 +92,19 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual([t[:5] for t in r.tags], [('tag', 2, 'v2', 'Add b', 'Two'), ('tag', 2, 'v1', 'Add a', None),
                                                    ('tag', 2, 'old', 'Add a', None), ('untag', 2, 'old')])
         self.assertEqual(r.stats['tags on a commit not found'], 1)
+
+    def test_a_soft_reset_and_an_amend_fold_the_last_commit_into_the_one_before(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('git add -A && git commit -q -m "Add a"')
+        s.write(self.p('b.py'), 'b\n')
+        s.bash('git add -A && git commit -q -m "Add b"')
+        s.bash('git reset --soft HEAD~1 && git commit -q --amend --no-edit && git tag v1')
+        r, units = self.replay(s)
+        self.assertEqual(units[-1]['agent'], {'message': '', 'amend': True, 'uncommit': 1})
+        self.assertEqual(r.tags[0][3], 'Add a')
+        self.assertEqual([(c[1], sorted(c[5])) for c in commits_of(units, {})[0]], [('Add a', ['a.py', 'b.py'])])
 
     def test_a_file_removed_by_git_rm_leaves_the_next_commit(self):
         s = self.session()
@@ -299,6 +313,11 @@ class GitOperationsTest(unittest.TestCase):
                              ' && git tag', '/work/app', '/work/app')
         self.assertEqual(ops, [('tag', 'v1.0', 'abc1234', 'One'), ('tag', 'v2', None, None),
                                ('untag', 'v1.0'), ('untag', 'v2')])
+
+    def test_a_soft_reset_takes_commits_back_and_an_unstaging_one_does_not(self):
+        ops = git_operations('git reset --soft HEAD~2 && git reset HEAD^ && git reset HEAD a.py && git reset --hard HEAD~1',
+                             '/work/app', '/work/app')
+        self.assertEqual(ops, [('uncommit', 2), ('uncommit', 1)])
 
     def test_a_rebase_squashing_fixups_with_the_environment_set_before_it(self):
         ops = git_operations('GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash main && git rebase main',

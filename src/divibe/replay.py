@@ -63,7 +63,8 @@ def git_operations(command, cwd, root):
     """What a command line run in the project stages, commits, squashes and
     tags: ('add', paths or None for everything) for `git add`, `git rm` and
     `git mv`, ('commit', message, amend, all_tracked), ('autosquash',) for
-    `git rebase --autosquash`, and those of tag_operations, in order."""
+    `git rebase --autosquash`, ('uncommit', n) for `git reset --soft HEAD~n`,
+    and those of tag_operations, in order."""
     found = []
     here = cwd
     for part in re.split(r'\s*(?:;|&&|\|\||\n)\s*', command):
@@ -115,9 +116,22 @@ def git_operations(command, cwd, root):
             found.append(('commit', message, amend, every))
         elif args[0] == 'rebase' and '--autosquash' in args:
             found.append(('autosquash',))
+        elif args[0] == 'reset' and not {'--hard', '--keep', '--merge'} & set(args):
+            # `git reset --soft HEAD~n`: the last n commits taken back, their
+            # work kept for the next commit
+            revisions = [a for a in args[1:] if not a.startswith('-')]
+            m = re.fullmatch(r'HEAD((?:[~^]\d*)+)', revisions[0]) if len(revisions) == 1 else None
+            if m:
+                found.append(('uncommit', steps_back(m.group(1))))
         elif args[0] == 'tag':
             found += tag_operations(args[1:])
     return found
+
+
+def steps_back(suffix):
+    """How many commits back a revision's suffix goes: ~2, ^, ~^ (a ^ is one
+    step, the first parent)."""
+    return sum(int(s[1:] or 1) if s[0] == '~' else 1 for s in re.findall(r'[~^]\d*', suffix or ''))
 
 
 LISTING = ('-l', '--list', '-v', '--verify', '-n', '--contains', '--no-contains', '--points-at', '--sort',
@@ -181,6 +195,8 @@ class Replay:
         self.fixups = []
         # the subjects of the agent's commits, HEAD last
         self.heads = []
+        # commits `git reset --soft` took back, for the next commit to hold
+        self.taken_back = 0
         self.tags = []
         self.ids = set()
         self.tree = Tree(self.root, Tracked())
@@ -265,6 +281,8 @@ class Replay:
             self.stats['files taken from the commits git recorded'] += len(set(unseen) - self.from_git)
             self.from_git |= set(unseen)
         unit['agent'] = {'message': message or '', 'amend': amend}
+        if self.taken_back:
+            unit['agent']['uncommit'], self.taken_back = self.taken_back, 0
         if unit['agent']['message'].startswith('fixup! '):
             self.fixups.append(unit['agent'])
         subject = (message or '').split('\n')[0]
@@ -383,6 +401,9 @@ class Replay:
                         self.tags.append(('tag', len(self.units), op[1], subject, op[3], moment))
                 elif op[0] == 'untag':
                     self.tags.append(('untag', len(self.units), op[1]))
+                elif op[0] == 'uncommit':
+                    self.taken_back += op[1]
+                    del self.heads[max(0, len(self.heads) - op[1]):]
                 else:
                     self.stats['agent commits'] += 1
                     self.agent_commit(session, op[4], op[1], op[2], op[3], op[5])
@@ -396,7 +417,7 @@ class Replay:
         as the replay made them, anything else as the project's git knows it."""
         m = re.fullmatch(r'HEAD((?:[~^]\d*)*)|@', revision or 'HEAD')
         if m:
-            back = sum(int(s[1:] or 1) if s[0] == '~' else 1 for s in re.findall(r'[~^]\d*', m.group(1) or ''))
+            back = steps_back(m.group(1))
             return self.heads[-1 - back] if back < len(self.heads) else None
         return self.subject_of(revision) if self.subject_of else None
 
