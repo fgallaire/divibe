@@ -108,6 +108,18 @@ class ReplayTest(unittest.TestCase):
         _, units = self.replay(s, made=made)
         self.assertEqual([(u['agent'] or {}).get('message') for u in units], ['Add a', None])
         self.assertEqual([sorted(u['changes']) for u in units], [['a.py'], ['b.py']])
+        self.assertEqual(units[0]['date'], '2026-01-01T10:04:30.000Z')
+
+    def test_a_commit_takes_the_moment_the_reflog_gives_it(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('python -m unittest && git add -A && git commit -q -m "Add a"')
+        s.write(self.p('b.py'), 'b\n')
+        s.bash('git add -A && git commit -q -m "Add b"')
+        made = [(seconds('2026-01-01T10:04:50Z'), False, 'Add a')]
+        _, units = self.replay(s, made=made)
+        self.assertEqual([u['date'] for u in units], ['2026-01-01T10:04:50.000Z', '2026-01-01T10:08:00.000Z'])
 
     def test_a_failed_commit_is_no_cut(self):
         s = self.session()

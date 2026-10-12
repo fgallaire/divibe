@@ -54,6 +54,11 @@ def seconds(moment):
     return datetime.datetime.fromisoformat(moment.replace('Z', '+00:00')).timestamp()
 
 
+def utc(unix):
+    """A unix time as a log's moment."""
+    return datetime.datetime.fromtimestamp(unix, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+
+
 def git_operations(command, cwd, root):
     """The `git add` and `git commit` of a command line run in the project:
     ('add', paths or None for everything) and ('commit', message, amend,
@@ -258,12 +263,11 @@ class Replay:
             if kind == 'bash':
                 command, cwd, failed, reset, ended = payload
                 ops = git_operations(command, cwd or self.root, self.root) if self.repository else []
-                if failed:
-                    # a failed command may have done part of its work, but
-                    # which part is not known; a backup or a copy will say.
-                    # Its commits count where the reflog shows them made.
-                    ops = self.made_by(ops, moment, ended)
-                else:
+                # a failed command may have done part of its work, but which
+                # part is not known; a backup or a copy will say. Its commits
+                # count where the reflog shows them made.
+                ops = self.made_by(ops, moment, ended, failed)
+                if not failed:
                     unknown = run_bash(self.tree, command, cwd or self.root)
                     if unknown:
                         self.stats['shell commands not replayed'] += len(unknown)
@@ -281,29 +285,33 @@ class Replay:
                     self.stage(op[1])
                 else:
                     self.stats['agent commits'] += 1
-                    self.agent_commit(session, moment, op[1], op[2], op[3])
+                    self.agent_commit(session, op[4], op[1], op[2], op[3])
         self.close_all()
         for when, folder, name in marks:
             self.checkpoint(when, folder, name, read_copy(folder))
         return self.units
 
-    def made_by(self, ops, start, ended):
-        """The git operations of a failed command that took effect: those up
-        to the last of its commits the reflog shows made while it ran."""
+    def made_by(self, ops, start, ended, failed):
+        """The git operations of a command that took effect, each commit with
+        the moment the reflog shows it made while the command ran, else the
+        command's own. A failed command keeps those up to the last of its
+        commits the reflog shows."""
         low = seconds(start) - 1
         high = seconds(ended) + 1 if ended else low + 600
-        kept = 0
-        for index, op in enumerate(ops):
+        done, kept = [], 0
+        for op in ops:
             if op[0] != 'commit':
+                done.append(op)
                 continue
             subject = op[1].split('\n')[0] if op[1] else None
             found = next((i for i, (when, amend, said) in enumerate(self.made)
                           if low <= when <= high and amend == op[2] and subject in (None, said)), None)
-            if found is None:
+            if found is None and failed:
                 break
-            del self.made[found]
-            kept = index + 1
-        return ops[:kept]
+            when = start if found is None else max(start, utc(self.made.pop(found)[0]))
+            done.append(op + (when,))
+            kept = len(done)
+        return done[:kept] if failed else done
 
     def stage(self, paths):
         """`git add`: everything, or the files under the paths given."""
