@@ -8,41 +8,106 @@ commit, or as a handful of snapshots, although every change it went through
 is on disk: Claude Code keeps a log of each session and a copy of each file
 before it changes it. Divibe reads them, replays the work in order, and
 writes a repository whose commits are the requests that were made, dated
-when the work was done, with their messages.
+when the work was done.
 
 It never invents work. A commit holds what the logs show was changed, and
 the last commit is the project as it stands, checked file by file.
 
-## What it reads
-
-- **The session logs**, `~/.claude/projects/*/*.jsonl`: every request, every
-  `Edit` and `Write` with its exact text, every shell command with its working
-  directory, every `git commit` the agent made, and the time of each.
-- **The file backups**, `~/.claude/file-history/<session>/`: a file's content
-  before a turn changed it. Claude Code prunes them over time; those left are
-  points where the replay is checked and corrected.
-- **The project as it stands**, which the last commit must equal.
-- **Copies you kept**, if any: a folder and the moment it shows.
-
-## How good the history will be
-
-`divibe survey` answers before anything is written. A history is as good as
-the changes the logs describe exactly:
-
-| the changes went through | the replay is |
-|---|---|
-| `Edit` and `Write` | exact |
-| simple shell commands (`sed -i`, `cat >`, `cp`, `mv`, `rm`, a Python heredoc) | emulated, usually exact |
-| scripts, builds, package managers, editors outside the agent | unknown: taken from the next backup or copy |
-
-The survey says how many changes fall in each row, how many backups are left,
-whether the agent committed itself, and how far the replay ends from the
-project as it stands.
-
-## Usage
-
 ```sh
-python3 -m divibe survey PROJECT                # what the logs hold, and the expected quality
-python3 -m divibe units PROJECT                 # cut the work into units, one per request
-python3 -m divibe build PROJECT --out REPO      # write the history
+python3 -m divibe survey PROJECT                  # what the logs hold, and the quality to expect
+python3 -m divibe units PROJECT --todo            # the units of work still needing a message
+python3 -m divibe messages PROJECT messages.tsv   # record them: RANK<TAB>MESSAGE per line
+python3 -m divibe build PROJECT --out REPO        # write the history into a new repository
+python3 -m divibe verify PROJECT                  # rebuild a git project's history and compare it with its own
 ```
+
+Python 3.10 or later, nothing to install. Divibe reads the logs and writes only
+the new repository and its own state, under `~/.cache/divibe/`.
+
+## What the survey checks
+
+`divibe survey PROJECT` reads everything before writing anything, and says:
+
+**The sources.**
+
+- The session logs that name the project, in `~/.claude/projects/`: those of
+  the project itself and those of sessions run from elsewhere that changed
+  its files. Claude Code deletes logs older than `cleanupPeriodDays` (30 days
+  unless `~/.claude/settings.json` says otherwise): the survey warns when
+  that is short.
+- The file backups in `~/.claude/file-history/`: a file's content before a
+  turn changed it. Claude Code prunes them; those left are points where the
+  replay is checked, and corrected if it went wrong.
+- Copies of the project you kept, given as `--copy FOLDER@MOMENT`.
+- The project as it stands: in a git repository, what git tracks and does
+  not ignore; elsewhere, everything but the usual build folders and what the
+  `.gitignore` files leave out.
+
+**How each change was made**, since the history is as good as the changes
+the logs describe exactly:
+
+| the change went through | the replay is |
+|---|---|
+| the agent's `Write` and `Edit` | exact |
+| simple shell commands: `sed -i`, `cat > file`, `echo >`, `cp`, `mv`, `rm`, `touch`, `git mv`, a Python script given on standard input | emulated, usually exact |
+| anything else run in the project: a build, a package manager, a script on disk, a git command rewriting files | unknown: listed, and taken from the next backup or copy |
+
+**The commits the agent made itself.** They are kept as they were: their cut,
+their message, their moment.
+
+**Where the replay ends**, against the project as it stands, and the quality
+to expect:
+
+- **exact**: the replay never had to be corrected and ends on the project
+  file for file. Every commit holds what that moment held.
+- **close**: a few files are not where the replay leaves them. The last commit
+  takes them as they are, so the commits before it may miss part of their
+  changes.
+- **partial**: much of the work is not in the logs, or the logs are gone. The
+  commits hold what the logs show and the last one is a large catch-up.
+  Copies of the project from the past make it better.
+
+## Messages
+
+A unit is the work of one request. Its commit message comes from, in order:
+
+1. the messages you recorded with `divibe messages`;
+2. the agent's own `git commit -m`, for the units that end with one;
+3. nothing: `build` stops and names the units, unless `--draft` is given, which
+   takes the first line of each request.
+
+When the agent committed, its commits are the history: work cut off before
+one of them, by a new request or a session that ended, goes into it.
+
+A message can also be `+`, which folds the unit into the next one that has a
+message (a chain of fixes of one defect becomes one commit), or `-`, which
+drops a unit that a later one takes back.
+
+A treatment of an audit names its defects as it goes ("F1 is fixed. Now F2."):
+`--markers 'pattern'` cuts a unit wherever what the agent says names another
+one, the pattern's first group being the defect.
+
+## Dates
+
+A commit is dated when its work ended. A commit the agent made keeps its own
+moment. The other commits of one request are spread out after their work,
+one and a half to five and a half minutes apart, as a person commits them one
+after the other, and all before the first commit of the next request. No
+commit is dated before its work, and no two share a second.
+
+## For the best history
+
+- **Let the agent commit as it goes.** Its commits are kept as they are, and
+  `divibe verify` proves the logs reproduce them.
+- **Let the agent change files with `Write` and `Edit`**, not shell commands:
+  those are replayed exactly.
+- **Keep the logs**: set `cleanupPeriodDays` high in `~/.claude/settings.json`.
+- **Ignore build products** in `.gitignore`, so that no history holds them.
+- **Keep copies** of a project you cannot have the agent commit: each one is a
+  point where the history is checked.
+
+## Validation
+
+Divibe was written with Claude Code, committing as it went, and `divibe verify`
+rebuilds its history from the logs of that work: every commit identical in
+message and tree, dates within a second.
