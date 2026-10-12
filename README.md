@@ -3,10 +3,10 @@
 **A true git history for a project written with an AI agent, rebuilt from the
 agent's own records.**
 
-A project built with Claude Code often reaches a public repository as one
+A project built with an AI agent often reaches a public repository as one
 commit, or as a handful of snapshots, although every change it went through
-is on disk: Claude Code keeps a log of each session and a copy of each file
-before it changes it. Divibe reads them, replays the work in order, and
+is on disk: the agent keeps a log of each session. Divibe reads those of
+**Claude Code**, **Codex CLI** and **OpenCode**, replays the work in order, and
 writes a repository whose commits are the requests that were made, dated
 when the work was done.
 
@@ -35,14 +35,21 @@ the new repository and its own state, under `~/.cache/divibe/`.
 
 **The sources.**
 
-- The session logs that name the project, in `~/.claude/projects/`: those of
-  the project itself and those of sessions run from elsewhere that changed
-  its files. Claude Code deletes logs older than `cleanupPeriodDays` (30 days
-  unless `~/.claude/settings.json` says otherwise): the survey warns when
-  that is short.
-- The file backups in `~/.claude/file-history/`: a file's content before a
-  turn changed it. Claude Code prunes them; those left are points where the
-  replay is checked, and corrected if it went wrong.
+- The session logs that name the project: those of the project itself and
+  those of sessions run from elsewhere that changed its files, merged in
+  time whichever agent wrote them.
+  - Claude Code's, in `~/.claude/projects/`. Claude Code deletes logs older
+    than `cleanupPeriodDays` (30 days unless `~/.claude/settings.json` says
+    otherwise): the survey warns when that is short.
+  - Codex CLI's, in `~/.codex/sessions/` and `~/.codex/archived_sessions/`.
+  - OpenCode's, in its database `~/.local/share/opencode/opencode.db`, read
+    only. A subagent's session is part of its parent's work.
+- Claude Code's file backups in `~/.claude/file-history/`: a file's content
+  before a turn changed it. Claude Code prunes them; those left are points
+  where the replay is checked, and corrected if it went wrong. Codex and
+  OpenCode keep none.
+- In a git repository older than the logs, its last commit before them: the
+  project as the agent found it.
 - Copies of the project you kept, given as `--copy FOLDER@MOMENT`.
 - The project as it stands: in a git repository, what git tracks and does
   not ignore; elsewhere, everything but the usual build folders and what the
@@ -53,7 +60,7 @@ the logs describe exactly:
 
 | the change went through | the replay is |
 |---|---|
-| the agent's `Write` and `Edit` | exact |
+| the agent's own tools: Claude Code's and OpenCode's `write` and `edit`, Codex's patches | exact, unless the file was changed outside the logs (by hand, say) |
 | simple shell commands: `sed -i`, `cat > file`, `echo >`, `cp`, `mv`, `rm`, `touch`, `git mv`, a Python script given on standard input | emulated, usually exact |
 | anything else run in the project: a build, a package manager, a script on disk, a git command rewriting files | unknown: listed, and taken from the next backup or copy |
 
@@ -118,8 +125,11 @@ never released, so it tags nothing.
 
 - **Let the agent commit as it goes.** Its commits are kept as they are, and
   `divibe verify` proves the logs reproduce them.
-- **Let the agent change files with `Write` and `Edit`**, not shell commands:
-  those are replayed exactly.
+- **Let the agent change files with its own tools**, not shell commands: those
+  are replayed exactly.
+- **Change no file by hand while the agent works**, or tell it to commit
+  first: Codex and OpenCode keep no copy of a file, so a change made outside
+  the logs makes the agent's next changes to that file fail to replay.
 - **Keep the logs**: set `cleanupPeriodDays` high in `~/.claude/settings.json`.
 - **Ignore build products** in `.gitignore`, so that no history holds them.
 - **Keep copies** of a project you cannot have the agent commit: each one is a

@@ -40,7 +40,8 @@ class CommandLineTest(unittest.TestCase):
         s.save()
         self.state = os.path.join(self.root, 'state')
         self.options = ['--logs', os.path.join(self.root, 'projects'),
-                        '--backups', os.path.join(self.root, 'file-history'), '--state', self.state]
+                        '--backups', os.path.join(self.root, 'file-history'), '--state', self.state,
+                        '--codex', os.path.join(self.root, 'codex'), '--opencode', os.path.join(self.root, 'oc.db')]
 
     def test_the_whole_way_through(self):
         status, out = run('survey', self.project, *self.options)
@@ -82,6 +83,27 @@ class CommandLineTest(unittest.TestCase):
         status, out = run('verify', self.project, *self.options)
         self.assertEqual(status, 0, out)
         self.assertIn('1 of 1 commits identical', out)
+
+    def test_a_project_older_than_the_logs_starts_from_its_last_commit_before_them(self):
+        old = os.path.join(self.root, 'old')
+        os.makedirs(old)
+        env = dict(os.environ, GIT_AUTHOR_NAME='A', GIT_AUTHOR_EMAIL='a@b', GIT_COMMITTER_NAME='A',
+                   GIT_COMMITTER_EMAIL='a@b', GIT_AUTHOR_DATE='2025-06-01T10:00:00Z',
+                   GIT_COMMITTER_DATE='2025-06-01T10:00:00Z')
+        subprocess.run(['git', 'init', '-q'], cwd=old, check=True)
+        with open(os.path.join(old, 'm.py'), 'w') as f:
+            f.write('x = 1\n')
+        subprocess.run(['git', 'add', '-A'], cwd=old, check=True)
+        subprocess.run(['git', 'commit', '-q', '-m', 'Before the agent'], cwd=old, check=True, env=env)
+        s = Session(self.root, '-old', old)
+        s.ask('change x')
+        s.edit(old + '/m.py', 'x = 1', 'x = 2')
+        s.save()
+        with open(os.path.join(old, 'm.py'), 'w') as f:
+            f.write('x = 2\n')
+        status, out = run('survey', old, *self.options)
+        self.assertIn('the project before   commit ', out)
+        self.assertIn('Edit                 1     exact, 0 found the file different', out)
 
     def test_verify_compares_the_tags_too(self):
         s = Session(self.root, '-app', self.project, name='later', start='2026-01-02T10:00:00')

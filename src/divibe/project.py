@@ -153,6 +153,13 @@ class Project:
             for p in todo:
                 self._verdicts[p] = not self.rules.ignored(p)
 
+    def commit_before(self, moment):
+        """The last commit of the history made before a moment, if any: the
+        project as it was when the logs begin."""
+        out = subprocess.run(['git', 'rev-list', '-1', f'--before={moment}', 'HEAD'], cwd=self.root,
+                             capture_output=True, text=True, check=False).stdout.strip()
+        return out or None
+
     def subject_of(self, revision):
         """The subject of the commit a revision names, if git still has it."""
         out = subprocess.run(['git', 'log', '-1', '--format=%s', revision, '--'], cwd=self.root,

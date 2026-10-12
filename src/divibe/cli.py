@@ -7,7 +7,7 @@ import re
 import sys
 import tempfile
 
-from . import build, logs
+from . import build, codex, logs, opencode
 from .project import Project
 from .replay import Replay
 
@@ -48,10 +48,18 @@ class Analysis:
     def __init__(self, args):
         self.project = Project(args.project, args.exclude)
         root = self.project.root
-        self.files = logs.session_files(root, args.logs)
-        events, ids = logs.load(self.files)
-        self.events = events
-        self.items = logs.timeline(events, root, logs.backup_index(args.backups))
+        files = logs.session_files(root, args.logs)
+        events, ids = logs.load(files)
+        items = logs.timeline(events, root, logs.backup_index(args.backups))
+        lines = logs.lineages(ids)
+        rollouts = codex.session_files(root, args.codex)
+        items += codex.timeline(rollouts)
+        count, more, more_lines = opencode.timeline(root, args.opencode)
+        items += more
+        lines.update(more_lines)
+        # the agents each give their sessions, merged in time
+        self.sources = {'Claude Code': len(files), 'Codex': len(rollouts), 'OpenCode': count}
+        self.items = sorted(items, key=lambda i: i[0])
         self.now = self.project.files()
         candidates = {it[3][0] if it[2] == 'backup' else it[3][1].get('file_path', '') for it in self.items
                       if it[2] in ('backup', 'edit')}
@@ -59,12 +67,22 @@ class Analysis:
                              if p.startswith(root + '/')] + list(self.now))
         moment = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
         checkpoints = list(args.copy or []) + [(moment, root, 'the current tree')]
+        # a project older than the logs starts from its last commit before them
+        self.base = self.project.commit_before(self.items[0][0]) if self.project.git and self.items else None
+        if self.base:
+            checkpoints.append((self.items[0][0], 'git:' + self.base, 'commit ' + self.base[:7]))
         markers = re.compile(args.markers) if args.markers else None
         self.replay = Replay(root, self.project.public, checkpoints, markers, repository=self.project.git,
                              made=self.project.made, commit_files=self.project.commit_files,
                              subject_of=self.project.subject_of)
-        self.units = self.replay.run(self.items, logs.lineages(ids),
-                                     lambda folder: self.now if folder == root else self.project.files(folder))
+        self.units = self.replay.run(self.items, lines, self.read_copy)
+
+    def read_copy(self, folder):
+        if folder == self.project.root:
+            return self.now
+        if folder.startswith('git:'):
+            return self.project.commit_files(folder[4:])
+        return self.project.files(folder)
 
 
 def common(parser):
@@ -74,6 +92,8 @@ def common(parser):
     parser.add_argument('--markers', help='a pattern whose first group names a defect in what the agent says')
     parser.add_argument('--logs', default=logs.PROJECTS, help=argparse.SUPPRESS)
     parser.add_argument('--backups', default=logs.BACKUPS, help=argparse.SUPPRESS)
+    parser.add_argument('--codex', default=codex.HOME, help=argparse.SUPPRESS)
+    parser.add_argument('--opencode', default=opencode.DATABASE, help=argparse.SUPPRESS)
     parser.add_argument('--state', help='where units and messages are kept (default under ~/.cache/divibe)')
 
 
@@ -102,18 +122,24 @@ def survey(args):
     say('')
     say('Sources')
     span = f', {moments[0][:16].replace("T", " ")} to {moments[-1][:16].replace("T", " ")} UTC' if moments else ''
-    say(f'  session logs         {len(a.files)} naming the project{span}')
-    if days < 365:
+    found = ', '.join(f'{name} {n}' for name, n in a.sources.items() if n) or 'none'
+    say(f'  session logs         {found}, naming the project{span}')
+    if days < 365 and a.sources['Claude Code']:
         say(f'                       Claude Code deletes logs after {days} days'
             f'{"" if set_here else " (the default)"}: set cleanupPeriodDays in ~/.claude/settings.json to keep them')
     say(f'  file backups         {referenced} found for the project\'s files')
-    say(f'  copies you gave      {len(copies) or "none"}')
+    if a.base:
+        say(f'  the project before   commit {a.base[:7]}, the last one before the logs')
+    say(f'  copies you gave      {len(copies) - bool(a.base) or "none"}')
     say(f'  the project now      {len(a.now)} files ({"what git tracks and does not ignore" if a.project.git else "outside git: usual folders and .gitignore left out"})')
     say('')
     say('What the logs describe')
     say(f'  requests             {requests} that changed the project')
     say(f'  Write                {stats["writes"]:<5} exact')
     say(f'  Edit                 {stats["edits"]:<5} exact, {stats["edits that did not apply"]} found the file different')
+    if a.sources['Codex']:
+        say(f'  Codex patch          {stats["patches"]:<5} exact, {stats["patches that did not apply"]} found the file '
+            'different')
     say(f'  shell, replayed      {stats["shell commands replayed"]:<5} emulated (sed -i, cat >, cp, mv, rm, a Python heredoc...)')
     say(f'  shell, not replayed  {unknown:<5} a build, a package manager, a script, git rewriting files...')
     for when, command in r.unknown[:5]:
@@ -127,7 +153,8 @@ def survey(args):
                if stats['tags on a commit not found'] else ''))
     taken = stats['files taken from the commits git recorded']
     if taken:
-        say(f'  files no log describes  {taken} written by a tool (a lock file...), taken from the commits git recorded')
+        say(f'  files no log describes  {taken} written by a tool (a lock file...) or older than the logs, '
+            'taken from the commits git recorded')
     say('')
     say('The replay against the project as it stands')
     say(f'  identical            {len(a.now) - sum(1 for p in differ if p in a.now)} files')
@@ -136,7 +163,8 @@ def survey(args):
         say(f'  copy {name} ({when[:16]}): {len(d)} of {count} files taken from the copy')
     say('')
     ratio = len(differ) / max(1, len(a.now))
-    if not differ and not stats['edits that did not apply'] and not stats['backups correcting the replay']:
+    if not differ and not stats['edits that did not apply'] and not stats['patches that did not apply'] \
+            and not stats['backups correcting the replay']:
         grade, why = 'exact', ('the replay never had to be corrected and ends on the project as it stands'
                                + (': the commands not replayed changed no file it tracks.' if unknown else '.'))
     elif ratio <= 0.05:

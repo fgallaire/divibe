@@ -446,6 +446,9 @@ class Replay:
         rel = self.tree.rel(args.get('file_path', ''))
         if rel is None:
             return
+        if tool == 'Patch':
+            self.patch(rel, args)
+            return
         if tool == 'Write':
             self.tree.files[rel] = args.get('content', '')
             self.stats['writes'] += 1
@@ -460,3 +463,71 @@ class Replay:
             new = one.get('new_string', '')
             self.tree.files[rel] = text.replace(old, new) if one.get('replace_all') else text.replace(old, new, 1)
         self.stats['edits'] += 1
+
+    def patch(self, rel, change):
+        """A file Codex added, deleted, or updated by a diff (and moved)."""
+        kind = change.get('type')
+        if kind == 'add':
+            self.tree.files[rel] = change.get('content', '')
+        elif kind == 'delete':
+            self.tree.files.pop(rel, None)
+        elif kind == 'update':
+            text = self.tree.files.get(rel)
+            new = None if text is None else apply_diff(text, change.get('unified_diff', ''))
+            if new is None:
+                # the file as the replay has it is not the one the agent saw
+                self.stats['patches that did not apply'] += 1
+                return
+            target = self.tree.rel(change['move_path']) if change.get('move_path') else rel
+            if target != rel:
+                del self.tree.files[rel]
+            if target is not None:
+                self.tree.files[target] = new
+        else:
+            return
+        self.stats['patches'] += 1
+
+
+HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@')
+
+
+def apply_diff(content, diff):
+    """The content once the hunks of a unified diff are applied, None if one
+    does not apply. A hunk goes where its line numbers say, else where its
+    old lines first appear after the hunk before it."""
+    lines = content.split('\n')
+    end = content.endswith('\n')
+    if end:
+        lines.pop()
+    hunks, last, missing = [], None, set()
+    rows = diff.split('\n')
+    if rows and rows[-1] == '':
+        rows.pop()
+    for row in rows:
+        m = HUNK.match(row)
+        if m:
+            hunks.append((int(m.group(1)), [], []))
+        elif row.startswith('\\'):
+            # "\ No newline at end of file", for the side of the line above
+            missing |= {'-': {'old'}, '+': {'new'}}.get(last, {'old', 'new'})
+        elif hunks:
+            last, text = (row[0], row[1:]) if row else (' ', '')
+            if last in ' -':
+                hunks[-1][1].append(text)
+            if last in ' +':
+                hunks[-1][2].append(text)
+    if not hunks:
+        return None
+    out, at = [], 0
+    for start, old, new in hunks:
+        where = start - 1 if old else start
+        if lines[where:where + len(old)] != old or where < at:
+            where = next((i for i in range(at, len(lines) - len(old) + 1) if lines[i:i + len(old)] == old), None)
+            if where is None or not old:
+                return None
+        out += lines[at:where] + new
+        at = where + len(old)
+    out += lines[at:]
+    if missing:
+        end = 'new' not in missing
+    return '\n'.join(out) + ('\n' if end and out else '')
