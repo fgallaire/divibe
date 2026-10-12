@@ -80,6 +80,30 @@ class CodexTest(unittest.TestCase):
         self.assertEqual(replay.stats['patches that did not apply'], 1)
 
 
+    def test_a_file_printed_whole_corrects_the_replay_before_the_next_patch(self):
+        r = Rollout(self.home, self.project)
+        r.item(type='UserMessage', id='u1', content=[{'type': 'text', 'text': 'fix a'}])
+        r.item(type='FileChange', id='f1', status='completed', changes={
+            self.project + '/a.py': {'type': 'add', 'content': 'x = 1\n'}})
+        # changed by hand to x = 2, which only the commands' output shows
+        for uid, command, output in (('c1', 'cat a.py', 'x = 2\n'), ('c2', 'cat a.py b.py', 'x = 2\nb\n')):
+            r.item(type='CommandExecution', id=uid, command=['/bin/bash', '-lc', command], cwd='file://' + self.project,
+                   status='completed', exit_code=0, duration={'secs': 0, 'nanos': 0}, stdout='',
+                   aggregated_output=output)
+        r.item(type='FileChange', id='f2', status='completed', changes={
+            self.project + '/a.py': {'type': 'update', 'unified_diff': '@@ -1 +1 @@\n-x = 2\n+x = 3\n'}})
+        replay = Replay(self.project, everything, repository=False)
+        units = replay.run(codex.timeline([r.save()]), {}, dict)
+        self.assertEqual((replay.stats['files printed'], replay.stats['files printed correcting the replay'],
+                          replay.stats['patches that did not apply']), (1, 1, 0))
+        self.assertEqual(units[0]['changes'], {'a.py': 'x = 3\n'})
+
+    def test_the_file_a_command_prints_whole(self):
+        self.assertEqual(codex.printed_file('cd sub && cat a.py', '/p'), '/p/sub/a.py')
+        self.assertIsNone(codex.printed_file('cat -n a.py', '/p'))
+        self.assertIsNone(codex.printed_file('cat a.py | head', '/p'))
+
+
 class DiffTest(unittest.TestCase):
     def test_a_hunk_goes_where_its_old_lines_are_when_the_numbers_moved(self):
         self.assertEqual(apply_diff('a\nb\nc\nd\n', '@@ -1,2 +1,2 @@\n c\n-d\n+D\n'), 'a\nb\nc\nD\n')

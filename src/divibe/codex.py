@@ -11,12 +11,15 @@ the items a turn completed:
 - a FileChange: each file added with its content, updated with a unified
   diff (and moved, maybe), or deleted.
 
-Codex keeps no copy of a file before it changes it.
+Codex keeps no copy of a file before it changes it, but a command that
+printed one file whole, `cat FILE`, recorded what it was: the replay is
+checked there, and corrected if it went wrong.
 """
 import datetime
 import glob
 import json
 import os
+import shlex
 import urllib.parse
 
 HOME = os.path.expanduser('~/.codex')
@@ -47,10 +50,25 @@ def earlier(moment, duration):
     return when.strftime('%Y-%m-%dT%H:%M:%S.') + f'{when.microsecond // 1000:03d}Z'
 
 
+def printed_file(command, cwd):
+    """The file a command prints whole, `cat FILE` alone: its output is the
+    file as it was. Several files printed at once cannot be told apart."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return None
+    if len(words) > 3 and words[0] == 'cd' and words[2] == '&&':
+        cwd, words = os.path.join(cwd, os.path.expanduser(words[1])), words[3:]
+    if len(words) != 2 or words[0] != 'cat' or words[1].startswith('-'):
+        return None
+    return os.path.normpath(os.path.join(cwd, os.path.expanduser(words[1])))
+
+
 def timeline(files):
     """What happened, in time, as logs.timeline gives it; a file change is
-    an 'edit' of the tool 'Patch'. A session forked from another copies its
-    items: each one counts once."""
+    an 'edit' of the tool 'Patch', and a file a command printed whole is
+    'seen' (path, content). A session forked from another copies its items:
+    each one counts once."""
     items, seen = [], set()
     for path in files:
         session = os.path.basename(path)
@@ -85,6 +103,9 @@ def timeline(files):
                     failed = item.get('status') != 'completed' or item.get('exit_code') not in (0, None)
                     items.append((earlier(moment, item.get('duration')), session, 'bash',
                                   (command, cwd, failed, None, moment)))
+                    printed = None if failed else printed_file(command, cwd)
+                    if printed:
+                        items.append((moment, session, 'seen', (printed, item.get('aggregated_output') or '')))
                 elif kind == 'FileChange' and item.get('status') == 'completed':
                     for target, change in (item.get('changes') or {}).items():
                         items.append((moment, session, 'edit', ('Patch', dict(change, file_path=target))))

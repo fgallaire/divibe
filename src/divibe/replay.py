@@ -329,17 +329,20 @@ class Replay:
                     if 1 <= len(found) <= 2 and found[-1] != unit['marker']:
                         self.start(session, moment, unit['request'], found[-1])
                 continue
-            if kind == 'backup':
-                path, file = payload
+            if kind in ('backup', 'seen'):
+                # a file as it was: a backup on disk, or what a command printed
+                path, source = payload
                 rel = self.tree.rel(path)
                 if rel is None:
                     continue
-                with open(file, encoding='utf-8', errors='surrogateescape', newline='') as f:
-                    content = f.read()
-                self.stats['backups'] += 1
-                if rel in self.tree.files and self.tree.files[rel] != content:
-                    self.stats['backups correcting the replay'] += 1
-                self.tree.files[rel] = content
+                if kind == 'backup':
+                    with open(source, encoding='utf-8', errors='surrogateescape', newline='') as f:
+                        source = f.read()
+                name = 'backups' if kind == 'backup' else 'files printed'
+                self.stats[name] += 1
+                if rel in self.tree.files and self.tree.files[rel] != source:
+                    self.stats[name + ' correcting the replay'] += 1
+                self.tree.files[rel] = source
             elif kind == 'edit':
                 self.edit(*payload)
             ops = []

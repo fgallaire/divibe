@@ -145,6 +145,9 @@ def survey(args):
     for when, command in r.unknown[:5]:
         say(f'                         {when[:16]}  {command[:70]}')
     say(f'  backups that corrected the replay  {stats["backups correcting the replay"]}')
+    if stats['files printed']:
+        say(f'  files Codex printed whole  {stats["files printed"]}, {stats["files printed correcting the replay"]} '
+            'of them correcting the replay')
     say(f'  commits by the agent {agent:<5} kept as they were: their cut, their message, their moment')
     placed = sum(1 for t in r.tags if t[0] == 'tag')
     if placed or stats['tags on a commit not found']:
@@ -164,7 +167,7 @@ def survey(args):
     say('')
     ratio = len(differ) / max(1, len(a.now))
     if not differ and not stats['edits that did not apply'] and not stats['patches that did not apply'] \
-            and not stats['backups correcting the replay']:
+            and not stats['backups correcting the replay'] and not stats['files printed correcting the replay']:
         grade, why = 'exact', ('the replay never had to be corrected and ends on the project as it stands'
                                + (': the commands not replayed changed no file it tracks.' if unknown else '.'))
     elif ratio <= 0.05:
