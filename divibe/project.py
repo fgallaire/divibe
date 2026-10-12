@@ -101,29 +101,39 @@ class Project:
         self.git = is_git(self.root)
         self.rules = read_rules(self.root, excludes)
         self.extra = Rules([('', p) for p in excludes])
+        # what no one commits, even where nothing says to ignore it
+        self.usual = Rules([('', p) for p in DEFAULT_EXCLUDES])
+        self.tracked = set()
+        if self.git:
+            out = subprocess.run(['git', '-c', 'core.quotepath=false', 'ls-files', '-z'], cwd=self.root,
+                                 capture_output=True, text=True, check=False).stdout
+            self.tracked = {p for p in out.split('\0') if p}
         self._verdicts = {}
 
+    def verdict(self, rel, ignored_by_git):
+        if self.extra.ignored(rel) or rel.split('/')[0] == '.git':
+            return False
+        if rel in self.tracked:
+            return True
+        return not (ignored_by_git or self.usual.ignored(rel))
+
     def public(self, rel):
-        if rel in self._verdicts:
-            return self._verdicts[rel]
-        if self.git:
-            verdict = not (self.extra.ignored(rel) or rel.split('/')[0] == '.git'
-                           or rel in git_ignored(self.root, [rel]))
-        else:
-            verdict = not self.rules.ignored(rel)
-        self._verdicts[rel] = verdict
-        return verdict
+        if rel not in self._verdicts:
+            self.decide([rel])
+        return self._verdicts[rel]
 
     def decide(self, paths):
         """Settles many paths at once, so that public() answers from memory."""
-        todo = [p for p in paths if p not in self._verdicts]
-        if self.git and todo:
+        todo = [p for p in dict.fromkeys(paths) if p not in self._verdicts]
+        if not todo:
+            return
+        if self.git:
             ignored = git_ignored(self.root, todo)
             for p in todo:
-                self._verdicts[p] = not (p in ignored or self.extra.ignored(p) or p.split('/')[0] == '.git')
+                self._verdicts[p] = self.verdict(p, p in ignored)
         else:
             for p in todo:
-                self.public(p)
+                self._verdicts[p] = not self.rules.ignored(p)
 
     def files(self, folder=None):
         """The files of the project (or of a copy of it in folder) that belong
@@ -137,6 +147,12 @@ class Project:
                 if os.path.islink(path) or not os.path.isfile(path):
                     continue
                 found[os.path.relpath(path, folder)] = path
+        if folder == self.root:
+            # a tracked file is the project's, in whatever folder the walk skips
+            for rel in self.tracked:
+                path = os.path.join(folder, rel)
+                if rel not in found and os.path.isfile(path) and not os.path.islink(path):
+                    found[rel] = path
         self.decide(list(found))
         result = {}
         for rel, path in found.items():

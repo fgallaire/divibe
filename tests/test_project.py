@@ -66,6 +66,16 @@ class ProjectTest(unittest.TestCase):
         self.assertFalse(project.public('other.log'))
         self.assertFalse(project.public('audits/b.md'))
 
+    def test_in_git_what_no_one_commits_is_out_though_nothing_ignores_it(self):
+        root = tempfile.mkdtemp()
+        subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+        write(root, 'm.py', 'm')
+        write(root, '__pycache__/m.cpython-314.pyc', 'compiled')
+        write(root, 'vendored/node_modules/x.js', 'x')
+        subprocess.run(['git', 'add', '-f', 'vendored/node_modules/x.js'], cwd=root, check=True)
+        project = Project(root)
+        self.assertEqual(sorted(project.files()), ['m.py', 'vendored/node_modules/x.js'])
+
     def test_an_exclude_given_by_the_user_is_out(self):
         root = tempfile.mkdtemp()
         write(root, 'a.py', 'a')
