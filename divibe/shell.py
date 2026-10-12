@@ -10,6 +10,8 @@ package manager, a script on disk, a git command that rewrites the work tree)
 is reported as unknown: what it did is taken from the next backup or copy.
 """
 import builtins
+import codecs
+import contextlib
 import fnmatch
 import io
 import json
@@ -19,6 +21,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 
 
 class Tree:
@@ -135,6 +138,35 @@ def run_sed(tree, words):
 
 def refused(*args, **kwargs):
     raise PermissionError('refused while replaying')
+
+
+# A replayed script runs in this process. Its file accesses are turned to the
+# tree, but a script reaches the disk by more ways than any list of functions
+# covers (io.open, os.open, a C extension). So while one runs, an audit hook
+# refuses whatever would write, remove, run a program or talk to the network:
+# a replay never changes anything on the machine.
+REPLAYING = [False]
+WRITING = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+FORBIDDEN = ('os.remove', 'os.rename', 'os.mkdir', 'os.rmdir', 'os.symlink', 'os.link', 'os.truncate', 'os.chmod',
+             'os.chown', 'os.utime', 'os.chflags', 'os.lchflags', 'os.lchmod', 'os.setxattr', 'os.removexattr',
+             'os.system', 'os.fork', 'os.forkpty', 'os.kill', 'os.killpg', 'os.startfile', 'os.putenv',
+             'os.unsetenv', 'tempfile.mkstemp', 'tempfile.mkdtemp', 'sqlite3.connect', 'webbrowser.open')
+FORBIDDEN_FAMILIES = ('os.exec', 'os.spawn', 'os.posix_spawn', 'shutil.', 'subprocess.', 'socket.', 'ctypes.',
+                      'urllib.', 'http.', 'ftplib.', 'smtplib.', 'winreg.')
+
+
+def guard(event, args):
+    if not REPLAYING[0]:
+        return
+    if event == 'open':
+        path, mode, flags = (tuple(args) + (None, None, None))[:3]
+        if (isinstance(mode, str) and any(c in mode for c in 'wax+')) or (isinstance(flags, int) and flags & WRITING):
+            raise PermissionError(f'a replayed script may not write {path}')
+    elif event in FORBIDDEN or event.startswith(FORBIDDEN_FAMILIES):
+        raise PermissionError(f'a replayed script may not run {event}')
+
+
+sys.addaudithook(guard)
 
 
 def run_python(tree, source):
@@ -306,23 +338,29 @@ def run_python(tree, source):
     stubs += [(shutil, name) for name in ('copy', 'copy2', 'copyfile', 'copytree', 'move', 'rmtree')]
     stubs += [(subprocess, name) for name in ('run', 'call', 'check_call', 'check_output', 'Popen')]
     saved = [(module, name, getattr(module, name)) for module, name in stubs if hasattr(module, name)]
-    real_path = pathlib.Path
+    real_path, real_io_open, real_codecs_open = pathlib.Path, io.open, codecs.open
     try:
-        builtins.open = fake_open
+        builtins.open = io.open = fake_open
+        codecs.open = lambda path, mode='r', *a, **k: fake_open(path, mode.replace('b', ''))
         pathlib.Path = FakePath
         for module, name, _ in saved:
             setattr(module, name, moves.get(name, refused) if module is os else refused)
         os.listdir, os.walk = listdir, walk
         os.path.exists, os.path.isfile, os.path.isdir = exists, isfile, isdir
         globmod.glob, globmod.iglob = globbed, lambda *a, **k: iter(globbed(*a, **k))
-        exec(compile(source, '<log>', 'exec'), {'__name__': '__main__', 'open': fake_open, 'Path': FakePath})
+        code = compile(source, '<log>', 'exec')
+        REPLAYING[0] = True
+        # what the script printed was for the agent then, not for us now
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            exec(code, {'__name__': '__main__', 'open': fake_open, 'Path': FakePath})
         return True
     except BaseException:
         return False
     finally:
+        REPLAYING[0] = False
         for closing in unclosed:
             closing()
-        builtins.open = real_open
+        builtins.open, io.open, codecs.open = real_open, real_io_open, real_codecs_open
         pathlib.Path = real_path
         for module, name, value in saved:
             setattr(module, name, value)

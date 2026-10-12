@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 
 from divibe.shell import Tree, run_bash
@@ -63,6 +65,46 @@ class ShellTest(unittest.TestCase):
         script = "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['touch', '/tmp/x'])\nPY"
         self.assertEqual(len(run_bash(t, script, ROOT)), 1)
         self.assertEqual(t.files, {})
+
+    def test_every_way_a_script_writes_goes_to_the_tree_or_is_refused(self):
+        folder = tempfile.mkdtemp()
+        here = os.getcwd()
+        t = tree()
+        script = ("python3 - <<'PY'\nimport io, codecs, os\n"
+                  "io.open('a.txt', 'w').write('io')\n"
+                  "codecs.open('b.txt', 'w', 'utf-8').write('codecs')\n"
+                  "fd = os.open('c.txt', os.O_WRONLY | os.O_CREAT)\nPY")
+        try:
+            # the process's own folder is where a write that escaped would land
+            os.chdir(folder)
+            unknown = run_bash(t, script, ROOT)
+        finally:
+            os.chdir(here)
+        self.assertEqual(os.listdir(folder), [])
+        self.assertEqual(t.files, {'a.txt': 'io', 'b.txt': 'codecs'})
+        self.assertEqual(len(unknown), 1)
+
+    def test_a_script_cannot_write_an_absolute_path_on_disk(self):
+        folder = tempfile.mkdtemp()
+        target = os.path.join(folder, 'x.txt')
+        script = f"python3 - <<'PY'\nimport io\nio.open({target!r}, 'w').write('x')\nPY"
+        self.assertEqual(len(run_bash(tree(), script, ROOT)), 1)
+        self.assertFalse(os.path.exists(target))
+
+    def test_what_a_script_prints_is_not_shown(self):
+        import contextlib
+        import io
+        shown = io.StringIO()
+        with contextlib.redirect_stdout(shown):
+            run_bash(tree(), "python3 - <<'PY'\nprint('for the agent, then')\nPY", ROOT)
+        self.assertEqual(shown.getvalue(), '')
+
+    def test_writing_is_allowed_again_once_the_script_is_done(self):
+        run_bash(tree(), "python3 - <<'PY'\nx = 1\nPY", ROOT)
+        path = os.path.join(tempfile.mkdtemp(), 'after.txt')
+        with open(path, 'w') as f:
+            f.write('fine')
+        self.assertTrue(os.path.exists(path))
 
     def test_a_file_outside_the_project_is_not_touched(self):
         t = tree()
