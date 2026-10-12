@@ -1,0 +1,146 @@
+"""The project's files as they stand, and which paths belong in its history.
+
+In a git repository, a path belongs if git does not ignore it: the project's
+own `.gitignore`, `.git/info/exclude` and the user's global excludes decide,
+as they decide what `git add` takes. Elsewhere, a few folders no one commits
+are left out, and the `.gitignore` files are read with the common rules.
+"""
+import fnmatch
+import os
+import subprocess
+
+DEFAULT_EXCLUDES = ['.git/', 'node_modules/', '__pycache__/', '*.pyc', '.venv/', 'venv/', 'dist/', 'build/',
+                    '.DS_Store', '*.swp', '.svelte-kit/', 'coverage/', '.cache/']
+
+
+def is_git(root):
+    return subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=root, capture_output=True, text=True,
+                          check=False).stdout.strip() == os.path.realpath(root)
+
+
+class Rules:
+    """Ignore patterns, read the way .gitignore reads them: a pattern with a
+    slash anywhere but at its end is anchored to its folder, one ending with
+    a slash names a folder, `!` takes a path back."""
+
+    def __init__(self, patterns=()):
+        self.rules = []
+        for base, pattern in patterns:
+            self.add(base, pattern)
+
+    def add(self, base, pattern):
+        pattern = pattern.rstrip('\n').rstrip()
+        if not pattern or pattern.startswith('#'):
+            return
+        negate = pattern.startswith('!')
+        pattern = pattern[1:] if negate else pattern
+        folder = pattern.endswith('/')
+        pattern = pattern.rstrip('/')
+        anchored = '/' in pattern
+        self.rules.append((base, pattern.lstrip('/'), folder, anchored, negate))
+
+    def ignored(self, rel):
+        parts = rel.split('/')
+        verdict = False
+        for base, pattern, folder, anchored, negate in self.rules:
+            if base and not rel.startswith(base + '/'):
+                continue
+            inner = rel[len(base) + 1:] if base else rel
+            names = inner.split('/')
+            hit = False
+            # a folder pattern matches any folder on the path; a file pattern
+            # the path itself or one of the folders holding it
+            for depth in range(1, len(names) + 1):
+                if folder and depth == len(names):
+                    break
+                candidate = '/'.join(names[:depth]) if anchored else names[depth - 1]
+                if fnmatch.fnmatchcase(candidate, pattern) or (anchored and fnmatch.fnmatchcase(
+                        candidate, pattern.replace('**/', ''))):
+                    hit = True
+                    break
+            if hit:
+                verdict = not negate
+        return verdict or any(p in ('.git',) for p in parts)
+
+
+def read_rules(root, extra=()):
+    rules = Rules([('', p) for p in DEFAULT_EXCLUDES])
+    for folder, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in ('.git', 'node_modules')]
+        if '.gitignore' in names:
+            base = os.path.relpath(folder, root)
+            with open(os.path.join(folder, '.gitignore'), encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    rules.add('' if base == '.' else base, line)
+    exclude = os.path.join(root, '.git', 'info', 'exclude')
+    if os.path.exists(exclude):
+        with open(exclude, encoding='utf-8', errors='replace') as f:
+            for line in f:
+                rules.add('', line)
+    for pattern in extra:
+        rules.add('', pattern)
+    return rules
+
+
+def git_ignored(root, paths):
+    """The paths, among those given, that git ignores in this repository; a
+    tracked file is never one of them, whatever the patterns say."""
+    if not paths:
+        return set()
+    out = subprocess.run(['git', 'check-ignore', '--stdin', '-z'], cwd=root,
+                         input='\0'.join(paths) + '\0', capture_output=True, text=True, check=False).stdout
+    return {p for p in out.split('\0') if p}
+
+
+class Project:
+    """The project at root: its files as they stand, and whether a path
+    belongs in its history."""
+
+    def __init__(self, root, excludes=()):
+        self.root = os.path.realpath(root)
+        self.git = is_git(self.root)
+        self.rules = read_rules(self.root, excludes)
+        self.extra = Rules([('', p) for p in excludes])
+        self._verdicts = {}
+
+    def public(self, rel):
+        if rel in self._verdicts:
+            return self._verdicts[rel]
+        if self.git:
+            verdict = not (self.extra.ignored(rel) or rel.split('/')[0] == '.git'
+                           or rel in git_ignored(self.root, [rel]))
+        else:
+            verdict = not self.rules.ignored(rel)
+        self._verdicts[rel] = verdict
+        return verdict
+
+    def decide(self, paths):
+        """Settles many paths at once, so that public() answers from memory."""
+        todo = [p for p in paths if p not in self._verdicts]
+        if self.git and todo:
+            ignored = git_ignored(self.root, todo)
+            for p in todo:
+                self._verdicts[p] = not (p in ignored or self.extra.ignored(p) or p.split('/')[0] == '.git')
+        else:
+            for p in todo:
+                self.public(p)
+
+    def files(self, folder=None):
+        """The files of the project (or of a copy of it in folder) that belong
+        in its history, with their content."""
+        folder = folder or self.root
+        found = {}
+        for base, dirs, names in os.walk(folder):
+            dirs[:] = [d for d in dirs if d not in ('.git', 'node_modules')]
+            for name in names:
+                path = os.path.join(base, name)
+                if os.path.islink(path) or not os.path.isfile(path):
+                    continue
+                found[os.path.relpath(path, folder)] = path
+        self.decide(list(found))
+        result = {}
+        for rel, path in found.items():
+            if self.public(rel):
+                with open(path, encoding='utf-8', errors='surrogateescape', newline='') as f:
+                    result[rel] = f.read()
+        return result
