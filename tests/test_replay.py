@@ -75,6 +75,17 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual([sorted(u['changes']) for u in units], [['a.py'], ['b.py'], ['c.py']])
         self.assertEqual(r.stats['agent commits'], 2)
 
+    def test_a_file_removed_by_git_rm_leaves_the_next_commit(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.write(self.p('b.py'), 'b\n')
+        s.bash('git add -A && git commit -q -m "Add a and b"')
+        s.write(self.p('c.py'), 'c\n')
+        s.bash('git rm -q a.py && git commit -q -m "Drop a"')
+        _, units = self.replay(s)
+        self.assertEqual([u['changes'] for u in units], [{'a.py': 'a\n', 'b.py': 'b\n'}, {'a.py': None}, {'c.py': 'c\n'}])
+
     def test_a_commit_in_another_repository_is_no_cut(self):
         s = self.session()
         s.ask('work')
@@ -236,6 +247,12 @@ class GitOperationsTest(unittest.TestCase):
     def test_an_amend(self):
         ops = git_operations('git commit --amend --no-edit', '/work/app', '/work/app')
         self.assertEqual(ops, [('commit', None, True, False)])
+
+    def test_git_rm_and_git_mv_stage_what_they_change(self):
+        ops = git_operations('git rm -q a.py && git mv b.py lib/ && git commit --amend --no-edit', '/work/app',
+                             '/work/app')
+        self.assertEqual(ops, [('add', ['/work/app/a.py']), ('add', ['/work/app/b.py', '/work/app/lib/']),
+                               ('commit', None, True, False)])
 
     def test_a_rebase_squashing_fixups_with_the_environment_set_before_it(self):
         ops = git_operations('GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash main && git rebase main',

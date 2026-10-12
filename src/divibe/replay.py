@@ -60,9 +60,10 @@ def utc(unix):
 
 
 def git_operations(command, cwd, root):
-    """The `git add`, `git commit` and `git rebase --autosquash` of a command
-    line run in the project: ('add', paths or None for everything),
-    ('commit', message, amend, all_tracked) and ('autosquash',), in order."""
+    """What a command line run in the project stages, commits and squashes:
+    ('add', paths or None for everything) for `git add`, `git rm` and
+    `git mv`, ('commit', message, amend, all_tracked) and ('autosquash',)
+    for `git rebase --autosquash`, in order."""
     found = []
     here = cwd
     for part in re.split(r'\s*(?:;|&&|\|\||\n)\s*', command):
@@ -90,6 +91,10 @@ def git_operations(command, cwd, root):
             paths = [a for a in args[1:] if not a.startswith('-')]
             everything = any(a in ('-A', '--all', '-u', '--update') for a in args[1:]) or paths == ['.']
             found.append(('add', None if everything or not paths else [os.path.join(repo, p) for p in paths]))
+        elif args[0] in ('rm', 'mv'):
+            # both stage what they remove, and `git mv` what it adds
+            paths = [a for a in args[1:] if not a.startswith('-')]
+            found.append(('add', [os.path.join(repo, p) for p in paths]))
         elif args[0] == 'commit':
             message, i = None, 1
             while i < len(args):
