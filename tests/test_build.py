@@ -73,6 +73,18 @@ class CommitsTest(unittest.TestCase):
                                                            ('fixup! Add a', {'d': 'd'})])
         self.assertEqual(commits[0][2], moment('2026-01-01T10:00:00Z'))
 
+    def test_a_later_change_that_changed_nothing_does_not_hold_a_fixup_back(self):
+        units = [
+            unit('1', '2026-01-01T10:00:00Z', {'v': '0.4'}, agent={'message': 'Package', 'amend': False}),
+            unit('2', '2026-01-01T10:02:00Z', {'b': 'b'}, agent={'message': 'Add b', 'amend': False}),
+            # a bump to 0.5 the agent took back by an amend
+            unit('3', '2026-01-01T10:04:00Z', {'v': '0.4'}, agent={'message': None, 'amend': True}),
+            unit('4', '2026-01-01T10:06:00Z', {'v': '0.3'},
+                 agent={'message': 'fixup! Package', 'amend': False, 'squashed': True}),
+        ]
+        commits, _ = commits_of(units, {})
+        self.assertEqual([(c[1], c[5]) for c in commits], [('Package', {'v': '0.3'}), ('Add b', {'b': 'b'})])
+
 
 class DatesTest(unittest.TestCase):
     def commit(self, key, when, group, fixed=False):

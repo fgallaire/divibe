@@ -49,6 +49,17 @@ def effective_messages(units, messages):
     return found
 
 
+def settle(commits):
+    """Drops from each commit the changes that leave a file as it was: an
+    amend that took a change back, a file read again from git."""
+    state = {}
+    for commit in commits:
+        changes = commit[5]
+        for path in [p for p, content in changes.items() if state.get(p) == content]:
+            del changes[path]
+        state.update(changes)
+
+
 def commits_of(units, messages, draft=False):
     """The commits the units make, in order: (key, message, natural moment,
     group, fixed, changes). Units with no message stop it, unless draft,
@@ -77,6 +88,7 @@ def commits_of(units, messages, draft=False):
             index = next((i for i in range(len(commits) - 1, -1, -1) if commits[i][1].split('\n')[0] == named),
                          None)
             if index is not None:
+                settle(commits)
                 later = set().union(*(c[5] for c in commits[index + 1:]))
                 for path, content in pending.items():
                     # a file a later commit changed too takes the fixup's
