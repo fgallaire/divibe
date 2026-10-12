@@ -49,7 +49,7 @@ class LogsTest(unittest.TestCase):
         s.save()
         items, _ = self.read([s.path])
         self.assertEqual([i[2] for i in items], ['request', 'note', 'edit', 'bash'])
-        self.assertEqual(items[3][3], ('sed -i s/1/2/ a.py', self.project, False, None))
+        self.assertEqual(items[3][3], ('sed -i s/1/2/ a.py', self.project, False, None, '2026-01-01T10:06:00.000Z'))
 
     def test_a_failed_edit_is_left_out_and_a_failed_command_is_marked(self):
         s = Session(self.root, '-work-app', self.project)

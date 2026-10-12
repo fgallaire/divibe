@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from divibe import logs
-from divibe.replay import Replay, git_operations
+from divibe.replay import Replay, git_operations, seconds
 from tests.fake import Session
 
 
@@ -21,12 +21,12 @@ class ReplayTest(unittest.TestCase):
     def session(self, **kw):
         return Session(self.root, '-work-app', self.project, **kw)
 
-    def replay(self, *sessions, checkpoints=(), markers=None):
+    def replay(self, *sessions, checkpoints=(), markers=None, made=()):
         files = [s.save() for s in sessions]
         events, ids = logs.load(files)
         index = logs.backup_index(os.path.join(self.root, 'file-history'))
         items = logs.timeline(events, self.project, index)
-        r = Replay(self.project, everything, checkpoints, markers)
+        r = Replay(self.project, everything, checkpoints, markers, made=made)
         units = r.run(items, logs.lineages(ids), lambda folder: self.copies[folder])
         return r, units
 
@@ -95,6 +95,19 @@ class ReplayTest(unittest.TestCase):
         items = logs.timeline(events, self.project, {})
         units = Replay(self.project, everything, repository=False).run(items, logs.lineages(ids), dict)
         self.assertEqual([sorted(u['changes']) for u in units], [['a.py', 'b.py']])
+
+    def test_a_commit_the_reflog_shows_made_while_its_command_ran_counts_though_the_command_failed(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('git add -A && git commit -q -m "Add a" && false', error=True)
+        s.write(self.p('b.py'), 'b\n')
+        s.bash('git add -A && git commit -q -m "Add b" && false', error=True)
+        # 'Add b' was made later, by a command the logs do not hold
+        made = [(seconds('2026-01-01T10:04:30Z'), False, 'Add a'), (seconds('2026-01-01T10:20:00Z'), False, 'Add b')]
+        _, units = self.replay(s, made=made)
+        self.assertEqual([(u['agent'] or {}).get('message') for u in units], ['Add a', None])
+        self.assertEqual([sorted(u['changes']) for u in units], [['a.py'], ['b.py']])
 
     def test_a_failed_commit_is_no_cut(self):
         s = self.session()

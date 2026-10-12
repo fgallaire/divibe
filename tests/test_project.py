@@ -83,6 +83,19 @@ class ProjectTest(unittest.TestCase):
         project = Project(root, excludes=['notes/'])
         self.assertEqual(sorted(project.files()), ['a.py'])
 
+    def test_the_reflog_says_which_commits_were_made_and_amended(self):
+        root = tempfile.mkdtemp()
+        git = ['git', '-c', 'user.name=A', '-c', 'user.email=a@example.org']
+        subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+        write(root, 'a.py', 'a')
+        subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', 'Start'], cwd=root, check=True)
+        subprocess.run(['git', 'add', '-A'], cwd=root, check=True)
+        subprocess.run(git + ['commit', '-q', '-m', 'Add a\n\nwith a body'], cwd=root, check=True)
+        subprocess.run(git + ['commit', '-q', '--amend', '--no-edit'], cwd=root, check=True)
+        made = Project(root).made
+        self.assertEqual([m[1:] for m in made], [(False, 'Start'), (False, 'Add a'), (True, 'Add a')])
+        self.assertTrue(made[0][0] <= made[2][0])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -10,6 +10,7 @@ removed), so a later step may fold units together or drop one without
 replaying again.
 """
 import collections
+import datetime
 import os
 import re
 import shlex
@@ -46,6 +47,11 @@ def stat(before, after):
     counts = collections.Counter(a)
     counts.subtract(b)
     return sum(-n for n in counts.values() if n < 0), sum(n for n in counts.values() if n > 0)
+
+
+def seconds(moment):
+    """A log's moment as a unix time."""
+    return datetime.datetime.fromisoformat(moment.replace('Z', '+00:00')).timestamp()
 
 
 def git_operations(command, cwd, root):
@@ -104,14 +110,17 @@ class Replay:
     public(rel) says whether a file belongs in the history. checkpoints are
     (moment, folder, name): copies of the project whose files the tree takes
     at that moment, the current tree last. markers, a compiled pattern,
-    finds in what the agent says the defect it moves to."""
+    finds in what the agent says the defect it moves to. made, from the
+    project's reflog, are the commits git records: (unix time, amend,
+    subject)."""
 
-    def __init__(self, root, public, checkpoints=(), markers=None, repository=True):
+    def __init__(self, root, public, checkpoints=(), markers=None, repository=True, made=()):
         self.root = root.rstrip('/')
         self.public = public
         # a `git commit` in a folder that is no repository did nothing, even
         # when a pipe hid its failure
         self.repository = repository
+        self.made = list(made)
         self.tree = Tree(self.root, Tracked())
         self.committed = {}
         self.units = []
@@ -247,11 +256,14 @@ class Replay:
                 self.edit(*payload)
             ops = []
             if kind == 'bash':
-                command, cwd, failed, reset = payload
-                if not failed:
+                command, cwd, failed, reset, ended = payload
+                ops = git_operations(command, cwd or self.root, self.root) if self.repository else []
+                if failed:
                     # a failed command may have done part of its work, but
-                    # which part is not known; a backup or a copy will say
-                    ops = git_operations(command, cwd or self.root, self.root) if self.repository else []
+                    # which part is not known; a backup or a copy will say.
+                    # Its commits count where the reflog shows them made.
+                    ops = self.made_by(ops, moment, ended)
+                else:
                     unknown = run_bash(self.tree, command, cwd or self.root)
                     if unknown:
                         self.stats['shell commands not replayed'] += len(unknown)
@@ -274,6 +286,24 @@ class Replay:
         for when, folder, name in marks:
             self.checkpoint(when, folder, name, read_copy(folder))
         return self.units
+
+    def made_by(self, ops, start, ended):
+        """The git operations of a failed command that took effect: those up
+        to the last of its commits the reflog shows made while it ran."""
+        low = seconds(start) - 1
+        high = seconds(ended) + 1 if ended else low + 600
+        kept = 0
+        for index, op in enumerate(ops):
+            if op[0] != 'commit':
+                continue
+            subject = op[1].split('\n')[0] if op[1] else None
+            found = next((i for i, (when, amend, said) in enumerate(self.made)
+                          if low <= when <= high and amend == op[2] and subject in (None, said)), None)
+            if found is None:
+                break
+            del self.made[found]
+            kept = index + 1
+        return ops[:kept]
 
     def stage(self, paths):
         """`git add`: everything, or the files under the paths given."""

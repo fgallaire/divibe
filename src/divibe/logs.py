@@ -115,15 +115,17 @@ def timeline(events, target, backups=None):
     """What happened, in time: (moment, session, kind, payload).
 
     kind is 'request' (text), 'note' (text), 'edit' (the tool's name and
-    input), 'bash' (command, cwd, failed, reset) or 'backup' (path, file)."""
+    input), 'bash' (command, cwd, failed, reset, ended: the moment its
+    result came back) or 'backup' (path, file)."""
     target = target.rstrip('/')
     backups = backup_index() if backups is None else backups
-    failed, resets = set(), {}
+    failed, resets, ended = set(), {}, {}
     for event in events:
         content = (event.get('message') or {}).get('content')
         if isinstance(content, list):
             for c in content:
                 if isinstance(c, dict) and c.get('type') == 'tool_result':
+                    ended[c.get('tool_use_id')] = event.get('timestamp')
                     if c.get('is_error'):
                         failed.add(c.get('tool_use_id'))
                     m = RESET.search(text_of(c.get('content')))
@@ -163,7 +165,7 @@ def timeline(events, target, backups=None):
                 elif c.get('type') == 'tool_use' and c.get('name') == 'Bash':
                     command = (c.get('input') or {}).get('command', '')
                     items.append((moment, session, 'bash', (command, event.get('cwd') or '', c['id'] in failed,
-                                                            resets.get(c['id']))))
+                                                            resets.get(c['id']), ended.get(c['id']))))
     # a backup kept under several snapshots counts once
     unique, kept = [], set()
     for item in sorted(items, key=lambda i: i[0]):

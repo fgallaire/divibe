@@ -7,6 +7,7 @@ are left out, and the `.gitignore` files are read with the common rules.
 """
 import fnmatch
 import os
+import re
 import subprocess
 
 DEFAULT_EXCLUDES = ['.git/', 'node_modules/', '__pycache__/', '*.pyc', '.venv/', 'venv/', 'dist/', 'build/',
@@ -16,6 +17,22 @@ DEFAULT_EXCLUDES = ['.git/', 'node_modules/', '__pycache__/', '*.pyc', '.venv/',
 def is_git(root):
     return subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=root, capture_output=True, text=True,
                           check=False).stdout.strip() == os.path.realpath(root)
+
+
+REFLOG_COMMIT = re.compile(r'HEAD@\{(\d+)\}\0commit(?: \((\w+)\))?: (.*)')
+
+
+def commits_made(root):
+    """The commits the reflog of HEAD records, oldest first: (unix time,
+    amend, subject). Git keeps them 90 days unless told otherwise."""
+    out = subprocess.run(['git', 'log', '-g', '--date=unix', '--format=%gd%x00%gs', 'HEAD'], cwd=root,
+                         capture_output=True, text=True, check=False).stdout
+    found = []
+    for line in out.splitlines():
+        m = REFLOG_COMMIT.fullmatch(line)
+        if m:
+            found.append((int(m.group(1)), m.group(2) == 'amend', m.group(3)))
+    return found[::-1]
 
 
 class Rules:
@@ -104,6 +121,7 @@ class Project:
         # what no one commits, even where nothing says to ignore it
         self.usual = Rules([('', p) for p in DEFAULT_EXCLUDES])
         self.tracked = set()
+        self.made = commits_made(self.root) if self.git else []
         if self.git:
             out = subprocess.run(['git', '-c', 'core.quotepath=false', 'ls-files', '-z'], cwd=self.root,
                                  capture_output=True, text=True, check=False).stdout

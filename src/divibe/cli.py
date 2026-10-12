@@ -60,7 +60,8 @@ class Analysis:
         moment = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
         checkpoints = list(args.copy or []) + [(moment, root, 'the current tree')]
         markers = re.compile(args.markers) if args.markers else None
-        self.replay = Replay(root, self.project.public, checkpoints, markers, repository=self.project.git)
+        self.replay = Replay(root, self.project.public, checkpoints, markers, repository=self.project.git,
+                             made=self.project.made)
         self.units = self.replay.run(self.items, logs.lineages(ids),
                                      lambda folder: self.now if folder == root else self.project.files(folder))
 

@@ -58,7 +58,8 @@ the logs describe exactly:
 | anything else run in the project: a build, a package manager, a script on disk, a git command rewriting files | unknown: listed, and taken from the next backup or copy |
 
 **The commits the agent made itself.** They are kept as they were: their cut,
-their message, their moment.
+their message, their moment. A command that failed after its `git commit`, a
+check chained behind it, still made the commit: git's reflog says so.
 
 **Where the replay ends**, against the project as it stands, and the quality
 to expect:
