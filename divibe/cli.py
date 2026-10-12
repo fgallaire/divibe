@@ -4,8 +4,8 @@ import datetime
 import json
 import os
 import re
-import subprocess
 import sys
+import tempfile
 
 from . import build, logs
 from .project import Project
@@ -214,18 +214,45 @@ def build_command(args):
                              f'{len(differ)} files: {", ".join(differ[:8])}')
 
 
-def compare(args):
-    one, two = build.history(args.first), build.history(args.second)
-    same = 0
+def compare_histories(first, second):
+    """Prints how two histories differ, commit by commit; 0 if they hold the
+    same commits, in message and tree."""
+    one, two = build.history(first), build.history(second)
+    same, apart = 0, 0.0
     for i, (a, b) in enumerate(zip(one, two)):
+        apart = max(apart, abs((build.moment(a[2]) - build.moment(b[2])).total_seconds()))
         if a[0] == b[0] and a[1] == b[1]:
             same += 1
             continue
         what = 'message' if a[1] == b[1] else 'tree' if a[0] == b[0] else 'message and tree'
         print(f'commit {i + 1}: {what} differ\n    {a[0][:70]}\n    {b[0][:70]}')
     print(f'{same} of {max(len(one), len(two))} commits identical in message and tree '
-          f'({len(one)} and {len(two)} commits)')
+          f'({len(one)} and {len(two)} commits), dates at most {apart:.0f} s apart')
     return 0 if same == len(one) == len(two) else 1
+
+
+def compare(args):
+    return compare_histories(args.first, args.second)
+
+
+def verify(args):
+    """Rebuilds a project's history from the logs, in a temporary folder, and
+    compares it with the project's own git history."""
+    a = Analysis(args)
+    if not a.project.git:
+        sys.exit(f'{a.project.root} has no git history to compare with')
+    messages = load_messages(state_dir(a.project.root, args.state))
+    missing = build.commits_of(a.units, messages)[1]
+    commits, _ = build.commits_of(a.units, messages, draft=True)
+    folder = tempfile.mkdtemp(prefix='divibe-')
+    out = os.path.join(folder, 'rebuilt')
+    build.write(out, commits, build.plan_dates(commits), build.identity(a.project.root))
+    status = compare_histories(a.project.root, out)
+    if missing:
+        print(f'{len(missing)} units with no message became draft commits: work not committed yet, '
+              'or committed outside the logs')
+    print(f'rebuilt history kept in {out}')
+    return status
 
 
 def main(argv=None):
@@ -254,5 +281,8 @@ def main(argv=None):
     p.add_argument('first')
     p.add_argument('second')
     p.set_defaults(run=compare)
+    p = sub.add_parser('verify', help='rebuild a git project\'s history from the logs and compare it with its own')
+    common(p)
+    p.set_defaults(run=verify)
     args = parser.parse_args(argv)
     return args.run(args) or 0
