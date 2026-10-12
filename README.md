@@ -122,3 +122,7 @@ Divibe was written with Claude Code, committing as it went, and `divibe verify`
 rebuilds its history from the logs of that work: every commit identical in
 message and tree, including one amended and a rewrite that removed compiled
 files committed by mistake, with dates within a second.
+
+## License
+
+Divibe is licensed under the MIT License: see the `LICENSE` file.
