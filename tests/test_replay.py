@@ -104,7 +104,8 @@ class ReplayTest(unittest.TestCase):
         s.write(self.p('b.py'), 'b\n')
         s.bash('git add -A && git commit -q -m "Add b" && false', error=True)
         # 'Add b' was made later, by a command the logs do not hold
-        made = [(seconds('2026-01-01T10:04:30Z'), False, 'Add a'), (seconds('2026-01-01T10:20:00Z'), False, 'Add b')]
+        made = [(seconds('2026-01-01T10:04:30Z'), False, 'Add a', None),
+                (seconds('2026-01-01T10:20:00Z'), False, 'Add b', None)]
         _, units = self.replay(s, made=made)
         self.assertEqual([(u['agent'] or {}).get('message') for u in units], ['Add a', None])
         self.assertEqual([sorted(u['changes']) for u in units], [['a.py'], ['b.py']])
@@ -117,9 +118,43 @@ class ReplayTest(unittest.TestCase):
         s.bash('python -m unittest && git add -A && git commit -q -m "Add a"')
         s.write(self.p('b.py'), 'b\n')
         s.bash('git add -A && git commit -q -m "Add b"')
-        made = [(seconds('2026-01-01T10:04:50Z'), False, 'Add a')]
+        made = [(seconds('2026-01-01T10:04:50Z'), False, 'Add a', None)]
         _, units = self.replay(s, made=made)
         self.assertEqual([u['date'] for u in units], ['2026-01-01T10:04:50.000Z', '2026-01-01T10:08:00.000Z'])
+
+    def test_a_file_a_tool_wrote_is_taken_from_the_commit_git_recorded(self):
+        s = self.session()
+        s.ask('package it')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('uv run python -m unittest && git add -A && git commit -q -m "Add a"')
+        made = [(seconds('2026-01-01T10:04:30Z'), False, 'Add a', 'h1')]
+        recorded = {'h1': {'a.py': 'a\n', 'uv.lock': 'lock\n'}}
+
+        def commit_files(commit, leave):
+            return {p: c for p, c in recorded[commit].items() if p not in leave}
+        files = [s.save()]
+        events, ids = logs.load(files)
+        items = logs.timeline(events, self.project, {})
+        r = Replay(self.project, everything, made=made, commit_files=commit_files)
+        units = r.run(items, logs.lineages(ids), dict)
+        self.assertEqual(units[0]['changes'], {'a.py': 'a\n', 'uv.lock': 'lock\n'})
+        self.assertEqual(r.stats['files taken from the commits git recorded'], 1)
+
+    def test_a_fixup_takes_its_message_from_the_reflog_and_an_autosquash_squashes_it(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('git add -A && git commit -q -m "Add a"')
+        s.write(self.p('b.py'), 'b\n')
+        s.bash('git add -A && git commit -q -m "Add b"')
+        s.write(self.p('c.py'), 'c\n')
+        s.bash('git add c.py && git commit -q --fixup=HEAD~1')
+        s.bash('GIT_SEQUENCE_EDITOR=: git rebase -q --autosquash HEAD~3')
+        made = [(seconds('2026-01-01T10:12:30Z'), False, 'fixup! Add a', None)]
+        _, units = self.replay(s, made=made)
+        self.assertEqual([u['agent'] for u in units], [{'message': 'Add a', 'amend': False},
+                                                       {'message': 'Add b', 'amend': False},
+                                                       {'message': 'fixup! Add a', 'amend': False, 'squashed': True}])
 
     def test_a_failed_commit_is_no_cut(self):
         s = self.session()
@@ -201,6 +236,11 @@ class GitOperationsTest(unittest.TestCase):
     def test_an_amend(self):
         ops = git_operations('git commit --amend --no-edit', '/work/app', '/work/app')
         self.assertEqual(ops, [('commit', None, True, False)])
+
+    def test_a_rebase_squashing_fixups_with_the_environment_set_before_it(self):
+        ops = git_operations('GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash main && git rebase main',
+                             '/work/app', '/work/app')
+        self.assertEqual(ops, [('autosquash',)])
 
 
 if __name__ == '__main__':

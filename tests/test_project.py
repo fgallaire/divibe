@@ -92,9 +92,15 @@ class ProjectTest(unittest.TestCase):
         subprocess.run(['git', 'add', '-A'], cwd=root, check=True)
         subprocess.run(git + ['commit', '-q', '-m', 'Add a\n\nwith a body'], cwd=root, check=True)
         subprocess.run(git + ['commit', '-q', '--amend', '--no-edit'], cwd=root, check=True)
-        made = Project(root).made
-        self.assertEqual([m[1:] for m in made], [(False, 'Start'), (False, 'Add a'), (True, 'Add a')])
-        self.assertTrue(made[0][0] <= made[2][0])
+        write(root, 'uv.lock', 'lock')
+        write(root, 'private.log', 'mine')
+        subprocess.run(['git', 'add', 'uv.lock', 'private.log'], cwd=root, check=True)
+        subprocess.run(git + ['commit', '-q', '-m', 'Lock'], cwd=root, check=True)
+        project = Project(root, excludes=['*.log'])
+        made = project.made
+        self.assertEqual([m[1:3] for m in made], [(False, 'Start'), (False, 'Add a'), (True, 'Add a'), (False, 'Lock')])
+        self.assertTrue(made[0][0] <= made[3][0])
+        self.assertEqual(project.commit_files(made[3][3], leave={'a.py'}), {'uv.lock': 'lock'})
 
 
 if __name__ == '__main__':

@@ -58,6 +58,21 @@ class CommitsTest(unittest.TestCase):
         commits, _ = commits_of(units, {})
         self.assertEqual([(c[1], c[5]) for c in commits], [('Add a', {'a': 'a2'}), ('Add b', {'b': 'b'})])
 
+    def test_a_squashed_fixup_folds_into_the_commit_it_names(self):
+        fixup = {'message': 'fixup! Add a', 'amend': False}
+        units = [
+            unit('1', '2026-01-01T10:00:00Z', {'a': 'a', 'c': 'c'}, agent={'message': 'Add a', 'amend': False}),
+            unit('2', '2026-01-01T10:02:00Z', {'b': 'b'}, agent={'message': 'Add b', 'amend': False}),
+            unit('3', '2026-01-01T10:04:00Z', {'a': 'a2', 'b': 'b2'}, agent=dict(fixup, squashed=True)),
+            unit('4', '2026-01-01T10:06:00Z', {'d': 'd'}, agent=fixup),
+        ]
+        commits, _ = commits_of(units, {})
+        # b changed after 'Add a' too: its fixed state starts where it was
+        self.assertEqual([(c[1], c[5]) for c in commits], [('Add a', {'a': 'a2', 'c': 'c'}),
+                                                           ('Add b', {'b': 'b2'}),
+                                                           ('fixup! Add a', {'d': 'd'})])
+        self.assertEqual(commits[0][2], moment('2026-01-01T10:00:00Z'))
+
 
 class DatesTest(unittest.TestCase):
     def commit(self, key, when, group, fixed=False):

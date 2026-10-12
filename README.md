@@ -59,7 +59,10 @@ the logs describe exactly:
 
 **The commits the agent made itself.** They are kept as they were: their cut,
 their message, their moment. A command that failed after its `git commit`, a
-check chained behind it, still made the commit: git's reflog says so.
+check chained behind it, still made the commit: git's reflog says so. A file
+no log describes, written by a tool (`uv.lock`, `package-lock.json`), is
+taken from the commit git recorded, and a `--fixup` commit that a rebase with
+`--autosquash` squashed folds into the commit it names.
 
 **Where the replay ends**, against the project as it stands, and the quality
 to expect:

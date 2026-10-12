@@ -60,9 +60,9 @@ def utc(unix):
 
 
 def git_operations(command, cwd, root):
-    """The `git add` and `git commit` of a command line run in the project:
-    ('add', paths or None for everything) and ('commit', message, amend,
-    all_tracked), in order."""
+    """The `git add`, `git commit` and `git rebase --autosquash` of a command
+    line run in the project: ('add', paths or None for everything),
+    ('commit', message, amend, all_tracked) and ('autosquash',), in order."""
     found = []
     here = cwd
     for part in re.split(r'\s*(?:;|&&|\|\||\n)\s*', command):
@@ -70,6 +70,8 @@ def git_operations(command, cwd, root):
             words = shlex.split(part, comments=True)
         except ValueError:
             continue
+        while words and re.match(r'[A-Za-z_]\w*=', words[0]):
+            words = words[1:]
         if not words:
             continue
         if words[0] == 'cd' and len(words) == 2:
@@ -106,6 +108,8 @@ def git_operations(command, cwd, root):
             amend = '--amend' in args
             every = any(re.fullmatch(r'-[a-zA-Z]*a[a-zA-Z]*', a) for a in args[1:]) or '--all' in args
             found.append(('commit', message, amend, every))
+        elif args[0] == 'rebase' and '--autosquash' in args:
+            found.append(('autosquash',))
     return found
 
 
@@ -117,15 +121,20 @@ class Replay:
     at that moment, the current tree last. markers, a compiled pattern,
     finds in what the agent says the defect it moves to. made, from the
     project's reflog, are the commits git records: (unix time, amend,
-    subject)."""
+    subject, hash); commit_files(hash, leave) gives the files of one of them
+    but those in leave."""
 
-    def __init__(self, root, public, checkpoints=(), markers=None, repository=True, made=()):
+    def __init__(self, root, public, checkpoints=(), markers=None, repository=True, made=(),
+                 commit_files=None):
         self.root = root.rstrip('/')
         self.public = public
         # a `git commit` in a folder that is no repository did nothing, even
         # when a pipe hid its failure
         self.repository = repository
         self.made = list(made)
+        self.commit_files = commit_files
+        # the units of `git commit --fixup` a rebase has yet to squash
+        self.fixups = []
         self.tree = Tree(self.root, Tracked())
         self.committed = {}
         self.units = []
@@ -182,13 +191,25 @@ class Replay:
             'summary': unit['notes'][-1] if unit['notes'] else '', 'marker': unit['marker'],
             'agent': unit['agent'], 'unknown': unit['unknown'], 'changes': changes, 'stat': stats})
 
-    def agent_commit(self, session, moment, message, amend, every):
+    def agent_commit(self, session, moment, message, amend, every, commit=None):
         """A commit the agent made: the unit ends with what it had staged, and
-        the work goes on in a new one under the same request."""
+        the work goes on in a new one under the same request. commit is its
+        hash, when the reflog has it."""
         unit = self.unit_of(session, moment)
         if every:
             self.stage_all = True
+        if commit and self.commit_files:
+            # a file the logs never describe, one a tool wrote (a lock file),
+            # is as git recorded it
+            unseen = self.commit_files(commit, set(self.tree.files) | set(self.committed))
+            for p, content in unseen.items():
+                self.tree.files[p] = content
+                self.staged.add(p)
+            self.tree.files.dirty -= set(unseen)
+            self.stats['files taken from the commits git recorded'] += len(unseen)
         unit['agent'] = {'message': message or '', 'amend': amend}
+        if unit['agent']['message'].startswith('fixup! '):
+            self.fixups.append(unit['agent'])
         unit['end'] = moment
         if self.stage_all:
             paths = {p for p in set(self.tree.files) | set(self.committed)
@@ -283,9 +304,13 @@ class Replay:
             for op in ops:
                 if op[0] == 'add':
                     self.stage(op[1])
+                elif op[0] == 'autosquash':
+                    for agent in self.fixups:
+                        agent['squashed'] = True
+                    self.fixups = []
                 else:
                     self.stats['agent commits'] += 1
-                    self.agent_commit(session, op[4], op[1], op[2], op[3])
+                    self.agent_commit(session, op[4], op[1], op[2], op[3], op[5])
         self.close_all()
         for when, folder, name in marks:
             self.checkpoint(when, folder, name, read_copy(folder))
@@ -293,9 +318,11 @@ class Replay:
 
     def made_by(self, ops, start, ended, failed):
         """The git operations of a command that took effect, each commit with
-        the moment the reflog shows it made while the command ran, else the
-        command's own. A failed command keeps those up to the last of its
-        commits the reflog shows."""
+        the moment and the hash the reflog gives it when it shows it made
+        while the command ran, else the command's moment; and with the
+        reflog's subject when the command gave no message (`--fixup`, `-F`).
+        A failed command keeps those up to the last of its commits the
+        reflog shows."""
         low = seconds(start) - 1
         high = seconds(ended) + 1 if ended else low + 600
         done, kept = [], 0
@@ -304,12 +331,16 @@ class Replay:
                 done.append(op)
                 continue
             subject = op[1].split('\n')[0] if op[1] else None
-            found = next((i for i, (when, amend, said) in enumerate(self.made)
+            found = next((i for i, (when, amend, said, _) in enumerate(self.made)
                           if low <= when <= high and amend == op[2] and subject in (None, said)), None)
             if found is None and failed:
                 break
-            when = start if found is None else max(start, utc(self.made.pop(found)[0]))
-            done.append(op + (when,))
+            if found is None:
+                done.append(op + (start, None))
+            else:
+                when, _, said, commit = self.made.pop(found)
+                message = said if op[1] is None and not op[2] else op[1]
+                done.append(('commit', message, op[2], op[3], max(start, utc(when)), commit))
             kept = len(done)
         return done[:kept] if failed else done
 

@@ -61,7 +61,7 @@ class Analysis:
         checkpoints = list(args.copy or []) + [(moment, root, 'the current tree')]
         markers = re.compile(args.markers) if args.markers else None
         self.replay = Replay(root, self.project.public, checkpoints, markers, repository=self.project.git,
-                             made=self.project.made)
+                             made=self.project.made, commit_files=self.project.commit_files)
         self.units = self.replay.run(self.items, logs.lineages(ids),
                                      lambda folder: self.now if folder == root else self.project.files(folder))
 
@@ -119,6 +119,9 @@ def survey(args):
         say(f'                         {when[:16]}  {command[:70]}')
     say(f'  backups that corrected the replay  {stats["backups correcting the replay"]}')
     say(f'  commits by the agent {agent:<5} kept as they were: their cut, their message, their moment')
+    taken = stats['files taken from the commits git recorded']
+    if taken:
+        say(f'  files no log describes  {taken} written by a tool (a lock file...), taken from the commits git recorded')
     say('')
     say('The replay against the project as it stands')
     say(f'  identical            {len(a.now) - sum(1 for p in differ if p in a.now)} files')

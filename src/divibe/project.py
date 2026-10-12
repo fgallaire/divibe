@@ -19,19 +19,19 @@ def is_git(root):
                           check=False).stdout.strip() == os.path.realpath(root)
 
 
-REFLOG_COMMIT = re.compile(r'HEAD@\{(\d+)\}\0commit(?: \((\w+)\))?: (.*)')
+REFLOG_COMMIT = re.compile(r'HEAD@\{(\d+)\}\0([0-9a-f]+)\0commit(?: \((\w+)\))?: (.*)')
 
 
 def commits_made(root):
     """The commits the reflog of HEAD records, oldest first: (unix time,
-    amend, subject). Git keeps them 90 days unless told otherwise."""
-    out = subprocess.run(['git', 'log', '-g', '--date=unix', '--format=%gd%x00%gs', 'HEAD'], cwd=root,
+    amend, subject, hash). Git keeps them 90 days unless told otherwise."""
+    out = subprocess.run(['git', 'log', '-g', '--date=unix', '--format=%gd%x00%H%x00%gs', 'HEAD'], cwd=root,
                          capture_output=True, text=True, check=False).stdout
     found = []
     for line in out.splitlines():
         m = REFLOG_COMMIT.fullmatch(line)
         if m:
-            found.append((int(m.group(1)), m.group(2) == 'amend', m.group(3)))
+            found.append((int(m.group(1)), m.group(3) == 'amend', m.group(4), m.group(2)))
     return found[::-1]
 
 
@@ -152,6 +152,17 @@ class Project:
         else:
             for p in todo:
                 self._verdicts[p] = not self.rules.ignored(p)
+
+    def commit_files(self, commit, leave=()):
+        """The files of one of the project's commits that belong in its
+        history, but those in leave, with their content."""
+        out = subprocess.run(['git', '-c', 'core.quotepath=false', 'ls-tree', '-r', '-z', '--name-only', commit],
+                             cwd=self.root, capture_output=True, text=True, check=False).stdout
+        names = [n for n in out.split('\0') if n and n not in leave]
+        self.decide(names)
+        return {n: subprocess.run(['git', 'show', f'{commit}:{n}'], cwd=self.root, capture_output=True,
+                                  check=False).stdout.decode('utf-8', 'surrogateescape')
+                for n in names if self.public(n)}
 
     def files(self, folder=None):
         """The files of the project (or of a copy of it in folder) that belong

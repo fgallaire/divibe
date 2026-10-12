@@ -3,7 +3,8 @@
 A unit's message comes from the messages file, or, for a commit the agent
 made, from the agent. A message `+` folds the unit into the next one that
 has a message; `-` drops a unit a later one takes back. An amend the agent
-made folds into the commit before it.
+made folds into the commit before it, and a `--fixup` commit a rebase with
+`--autosquash` squashed folds into the commit it names.
 
 A commit is dated when its work ended. A commit the agent made keeps the
 moment it was made. The others of one request are spread out after their
@@ -69,6 +70,20 @@ def commits_of(units, messages, draft=False):
         pending.update(unit['changes'])
         if message == '+':
             continue
+        agent = unit.get('agent') or {}
+        if agent.get('squashed'):
+            # `git rebase --autosquash` folded it into the commit it names
+            named = agent['message'][len('fixup! '):].split('\n')[0]
+            index = next((i for i in range(len(commits) - 1, -1, -1) if commits[i][1].split('\n')[0] == named),
+                         None)
+            if index is not None:
+                later = set().union(*(c[5] for c in commits[index + 1:]))
+                for path, content in pending.items():
+                    # a file a later commit changed too takes the fixup's
+                    # state from the last one on
+                    commits[-1 if path in later else index][5][path] = content
+                pending = {}
+                continue
         if unit.get('agent') and unit['agent'].get('amend') and commits:
             # an amended commit keeps its author's date, as git keeps it
             key, _, when, group, fixed, changes = commits.pop()
