@@ -182,6 +182,7 @@ class Replay:
         # the subjects of the agent's commits, HEAD last
         self.heads = []
         self.tags = []
+        self.ids = set()
         self.tree = Tree(self.root, Tracked())
         self.committed = {}
         self.units = []
@@ -203,7 +204,14 @@ class Replay:
         if previous is not None and previous['paths']:
             self.end(previous)
         same = marker is not None and previous is not None
-        unit = {'id': f'{moment}/{session}' + (f'#{marker}' if marker else ''), 'session': session,
+        base = f'{moment}/{session}' + (f'#{marker}' if marker else '')
+        # two commits in one second each start a unit at the same moment
+        uid, n = base, 1
+        while uid in self.ids:
+            n += 1
+            uid = f'{base}~{n}'
+        self.ids.add(uid)
+        unit = {'id': uid, 'session': session,
                 'start': moment, 'end': moment, 'request': request, 'marker': marker, 'paths': set(),
                 'notes': [], 'agent': None, 'unknown': [],
                 'request_id': previous['request_id'] if same else f'{moment}/{session}'}

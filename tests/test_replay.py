@@ -150,6 +150,20 @@ class ReplayTest(unittest.TestCase):
         _, units = self.replay(s, made=made)
         self.assertEqual([u['date'] for u in units], ['2026-01-01T10:04:50.000Z', '2026-01-01T10:08:00.000Z'])
 
+    def test_three_commits_in_one_second_make_three_units(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.write(self.p('b.py'), 'b\n')
+        s.write(self.p('c.py'), 'c\n')
+        s.bash('git add a.py && git commit -q -m "Add a" && git add b.py && git commit -q -m "Add b"'
+               ' && git add c.py && git commit -q -m "Add c"')
+        made = [(seconds('2026-01-01T10:08:30Z'), False, m, None) for m in ('Add a', 'Add b', 'Add c')]
+        _, units = self.replay(s, made=made)
+        self.assertEqual(len({u['id'] for u in units}), 3)
+        self.assertEqual([(u['agent']['message'], sorted(u['changes'])) for u in units],
+                         [('Add a', ['a.py']), ('Add b', ['b.py']), ('Add c', ['c.py'])])
+
     def test_a_file_a_tool_wrote_is_taken_from_the_commit_git_recorded(self):
         s = self.session()
         s.ask('package it')
