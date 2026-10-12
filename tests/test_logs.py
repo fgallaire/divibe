@@ -34,6 +34,13 @@ class LogsTest(unittest.TestCase):
         visitor.save()
         self.assertEqual(logs.session_files(self.project, self.projects), [visitor.path])
 
+    def test_a_session_that_only_ran_commands_in_the_project_is_found(self):
+        tagger = Session(self.root, '-work-app', self.project)
+        tagger.ask('tag it')
+        tagger.bash('git tag v1')
+        tagger.save()
+        self.assertEqual(logs.session_files(self.project, self.projects), [tagger.path])
+
     def test_a_prefix_of_the_project_name_is_not_the_project(self):
         near = Session(self.root, '-work-application', self.project + 'lication')
         near.write(self.project + 'lication/a.py', 'x\n')

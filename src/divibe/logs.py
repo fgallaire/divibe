@@ -26,13 +26,13 @@ RESET = re.compile(r'Shell cwd was reset to (\S+)')
 
 def session_files(target, projects=PROJECTS):
     """Every session log that names the target directory: those of the
-    project itself, and those of sessions run from elsewhere that changed
-    files in it."""
-    needle = target.rstrip('/') + '/'
+    project itself, even one that only ran commands there, and those of
+    sessions run from elsewhere that changed files in it."""
+    inside, itself = target.rstrip('/') + '/', json.dumps(target.rstrip('/'))
     found = []
     for path in sorted(glob.glob(os.path.join(projects, '**', '*.jsonl'), recursive=True)):
         with open(path, encoding='utf-8', errors='replace') as f:
-            if any(needle in line for line in f):
+            if any(inside in line or itself in line for line in f):
                 found.append(path)
     return found
 
