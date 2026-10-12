@@ -30,22 +30,27 @@ def message_of(unit, messages):
     return None
 
 
+def effective_messages(units, messages):
+    """Each unit's message as the build takes it, None where one is needed.
+
+    When the agent committed, its commits are the history: work cut off
+    before one of them (a new request, a session that ended) goes into it."""
+    found, seen = {}, False
+    for unit in reversed(units):
+        message = message_of(unit, messages)
+        found[unit['id']] = '+' if message is None and seen else message
+        seen = seen or bool(unit.get('agent'))
+    return found
+
+
 def commits_of(units, messages, draft=False):
     """The commits the units make, in order: (key, message, natural moment,
     group, fixed, changes). Units with no message stop it, unless draft,
     which takes the first line of the request."""
     commits, pending, missing = [], {}, []
-    # when the agent committed, its commits are the history: work cut off
-    # before one (a new request, a session that ended) goes into it
-    later_agent = [False] * len(units)
-    seen = False
-    for i in range(len(units) - 1, -1, -1):
-        later_agent[i] = seen
-        seen = seen or bool(units[i].get('agent'))
-    for index, unit in enumerate(units):
-        message = message_of(unit, messages)
-        if message is None and later_agent[index]:
-            message = '+'
+    effective = effective_messages(units, messages)
+    for unit in units:
+        message = effective[unit['id']]
         if unit.get('agent') and unit['agent'].get('amend') and commits and message in (None, ''):
             message = commits[-1][1]
         if message is None:

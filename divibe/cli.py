@@ -156,8 +156,9 @@ def units(args):
             row = {k: v for k, v in u.items() if k != 'changes'}
             f.write(json.dumps(row, ensure_ascii=False) + '\n')
     shown = 0
+    effective = build.effective_messages(a.units, messages)
     for rank, u in enumerate(a.units):
-        message = build.message_of(u, messages)
+        message = effective[u['id']]
         if args.todo and message is not None:
             continue
         files = ' '.join(f'{p} +{s[0]}/-{s[1]}' for p, s in u['stat'].items())
