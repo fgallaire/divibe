@@ -138,6 +138,8 @@ class Replay:
         self.repository = repository
         self.made = list(made)
         self.commit_files = commit_files
+        # the files known from git only, until the logs write them
+        self.from_git = set()
         # the units of `git commit --fixup` a rebase has yet to squash
         self.fixups = []
         self.tree = Tree(self.root, Tracked())
@@ -205,13 +207,15 @@ class Replay:
             self.stage_all = True
         if commit and self.commit_files:
             # a file the logs never describe, one a tool wrote (a lock file),
-            # is as git recorded it
-            unseen = self.commit_files(commit, set(self.tree.files) | set(self.committed))
+            # is as git recorded it, at each commit
+            known = (set(self.tree.files) | set(self.committed)) - self.from_git
+            unseen = self.commit_files(commit, known)
             for p, content in unseen.items():
                 self.tree.files[p] = content
                 self.staged.add(p)
             self.tree.files.dirty -= set(unseen)
-            self.stats['files taken from the commits git recorded'] += len(unseen)
+            self.stats['files taken from the commits git recorded'] += len(set(unseen) - self.from_git)
+            self.from_git |= set(unseen)
         unit['agent'] = {'message': message or '', 'amend': amend}
         if unit['agent']['message'].startswith('fixup! '):
             self.fixups.append(unit['agent'])
@@ -303,6 +307,7 @@ class Replay:
                         self.stats['shell commands replayed'] += 1
             changed = set(self.tree.files.dirty)
             self.tree.files.dirty.clear()
+            self.from_git -= changed
             if changed:
                 unit['paths'] |= changed
                 unit['end'] = moment

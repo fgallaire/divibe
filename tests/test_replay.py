@@ -138,8 +138,14 @@ class ReplayTest(unittest.TestCase):
         s.ask('package it')
         s.write(self.p('a.py'), 'a\n')
         s.bash('uv run python -m unittest && git add -A && git commit -q -m "Add a"')
-        made = [(seconds('2026-01-01T10:04:30Z'), False, 'Add a', 'h1')]
-        recorded = {'h1': {'a.py': 'a\n', 'uv.lock': 'lock\n'}}
+        s.bash('uv lock && git add -A && git commit -q -m "Lock again"')
+        s.write(self.p('uv.lock'), 'mine\n')
+        s.bash('git add -A && git commit -q -m "Write the lock"')
+        made = [(seconds('2026-01-01T10:04:30Z'), False, 'Add a', 'h1'),
+                (seconds('2026-01-01T10:06:30Z'), False, 'Lock again', 'h2'),
+                (seconds('2026-01-01T10:10:30Z'), False, 'Write the lock', 'h3')]
+        recorded = {'h1': {'a.py': 'a\n', 'uv.lock': 'lock\n'}, 'h2': {'a.py': 'a\n', 'uv.lock': 'lock2\n'},
+                    'h3': {'a.py': 'a\n', 'uv.lock': 'stale\n'}}
 
         def commit_files(commit, leave):
             return {p: c for p, c in recorded[commit].items() if p not in leave}
@@ -148,7 +154,10 @@ class ReplayTest(unittest.TestCase):
         items = logs.timeline(events, self.project, {})
         r = Replay(self.project, everything, made=made, commit_files=commit_files)
         units = r.run(items, logs.lineages(ids), dict)
-        self.assertEqual(units[0]['changes'], {'a.py': 'a\n', 'uv.lock': 'lock\n'})
+        # a file known from git only is read again at each commit, until the
+        # logs write it
+        self.assertEqual([u['changes'] for u in units], [{'a.py': 'a\n', 'uv.lock': 'lock\n'}, {'uv.lock': 'lock2\n'},
+                                                         {'uv.lock': 'mine\n'}])
         self.assertEqual(r.stats['files taken from the commits git recorded'], 1)
 
     def test_a_fixup_takes_its_message_from_the_reflog_and_an_autosquash_squashes_it(self):
