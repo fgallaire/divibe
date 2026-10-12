@@ -63,8 +63,9 @@ def git_operations(command, cwd, root):
     """What a command line run in the project stages, commits, squashes and
     tags: ('add', paths or None for everything) for `git add`, `git rm` and
     `git mv`, ('commit', message, amend, all_tracked), ('autosquash',) for
-    `git rebase --autosquash`, ('uncommit', n) for `git reset --soft HEAD~n`,
-    and those of tag_operations, in order."""
+    `git rebase --autosquash`, ('continue',) and ('abort',) for a rebase a
+    conflict stopped, ('uncommit', n) for `git reset --soft HEAD~n`, and
+    those of tag_operations, in order."""
     found = []
     here = cwd
     for part in re.split(r'\s*(?:;|&&|\|\||\n)\s*', command):
@@ -116,6 +117,10 @@ def git_operations(command, cwd, root):
             found.append(('commit', message, amend, every))
         elif args[0] == 'rebase' and '--autosquash' in args:
             found.append(('autosquash',))
+        elif args[0] == 'rebase' and '--continue' in args:
+            found.append(('continue',))
+        elif args[0] == 'rebase' and ('--abort' in args or '--quit' in args):
+            found.append(('abort',))
         elif args[0] == 'reset' and not {'--hard', '--keep', '--merge'} & set(args):
             # `git reset --soft HEAD~n`: the last n commits taken back, their
             # work kept for the next commit
@@ -197,6 +202,8 @@ class Replay:
         self.heads = []
         # commits `git reset --soft` took back, for the next commit to hold
         self.taken_back = 0
+        # a rebase that would squash fixups, stopped by a conflict
+        self.squash_waiting = False
         self.tags = []
         self.ids = set()
         self.tree = Tree(self.root, Tracked())
@@ -367,6 +374,9 @@ class Replay:
             if kind == 'bash':
                 command, cwd, failed, reset, ended = payload
                 ops = git_operations(command, cwd or self.root, self.root) if self.repository else []
+                if failed and ('autosquash',) in ops:
+                    # a conflict stopped the rebase: it squashes once it goes on
+                    self.squash_waiting = True
                 # a failed command may have done part of its work, but which
                 # part is not known; a backup or a copy will say. Its commits
                 # count where the reflog shows them made.
@@ -388,11 +398,13 @@ class Replay:
             for op in ops:
                 if op[0] == 'add':
                     self.stage(op[1])
-                elif op[0] == 'autosquash':
+                elif op[0] == 'autosquash' or op[0] == 'continue' and self.squash_waiting:
                     for agent in self.fixups:
                         agent['squashed'] = True
-                    self.fixups = []
+                    self.fixups, self.squash_waiting = [], False
                     self.heads = [h for h in self.heads if not h.startswith('fixup! ')]
+                elif op[0] in ('abort', 'continue'):
+                    self.squash_waiting = False
                 elif op[0] == 'tag':
                     subject = self.named(op[2])
                     if subject is None:

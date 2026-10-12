@@ -18,6 +18,7 @@ root (pyproject.toml, package.json, Cargo.toml) tags v<version> the commit
 where that version first appears, unless the agent placed that tag itself.
 """
 import datetime
+import difflib
 import hashlib
 import json
 import os
@@ -69,6 +70,67 @@ def settle(commits):
         state.update(changes)
 
 
+def merge3(base, ours, theirs):
+    """theirs with the changes that turn base into ours, line by line, as
+    git merges them; None where theirs changed the lines ours changes. An
+    insertion goes after the line it follows, or at the end if it ends base."""
+    b, o, t = (s.splitlines(keepends=True) for s in (base, ours, theirs))
+    where = {}
+    for block in difflib.SequenceMatcher(None, b, t, autojunk=False).get_matching_blocks():
+        where.update({block.a + k: block.b + k for k in range(block.size)})
+    edits = []
+    for kind, i1, i2, j1, j2 in difflib.SequenceMatcher(None, b, o, autojunk=False).get_opcodes():
+        if kind == 'equal':
+            continue
+        if i1 < i2:
+            spots = [where.get(i) for i in range(i1, i2)]
+            if None in spots or spots != list(range(spots[0], spots[0] + len(spots))):
+                return None
+            start, end = spots[0], spots[-1] + 1
+        elif i1 > 0 and i1 - 1 in where:
+            start = end = where[i1 - 1] + 1
+        elif i1 == len(b):
+            start = end = len(t)
+        elif i1 == 0:
+            start = end = 0
+        elif i1 in where:
+            start = end = where[i1]
+        else:
+            return None
+        edits.append((start, end, o[j1:j2]))
+    for (_, end, _), (start, _, _) in zip(edits, edits[1:]):
+        if start < end:
+            return None
+    for start, end, lines in reversed(edits):
+        t[start:end] = lines
+    return ''.join(t)
+
+
+def fold(commits, index, path, content):
+    """Puts a squashed fixup's content of a file into the commit it names,
+    and its changes into the commits after it that changed that file too, as
+    a rebase does; where that cannot merge, the fixup's content goes into
+    the last commit."""
+    state = {}
+    for c in commits[:index + 1]:
+        state.update(c[5])
+    base = state.copy()
+    for c in commits[index + 1:]:
+        base.update(c[5])
+    later = [c for c in commits[index + 1:] if path in c[5]]
+    if not later:
+        commits[index][5][path] = content
+        return
+    sides = [state.get(path)] + [c[5][path] for c in later]
+    merged = [merge3(base[path], content, s) if None not in (base.get(path), content, s) else None for s in sides]
+    if None in merged:
+        commits[-1][5][path] = content
+        return
+    commits[index][5][path] = merged[0]
+    for c, m in zip(later, merged[1:]):
+        c[5][path] = m
+
+
 def commits_of(units, messages, draft=False):
     """The commits the units make, in order: (key, message, natural moment,
     group, fixed, changes). Units with no message stop it, unless draft,
@@ -104,11 +166,8 @@ def commits_of(units, messages, draft=False):
                          None)
             if index is not None:
                 settle(commits)
-                later = set().union(*(c[5] for c in commits[index + 1:]))
                 for path, content in pending.items():
-                    # a file a later commit changed too takes the fixup's
-                    # state from the last one on
-                    commits[-1 if path in later else index][5][path] = content
+                    fold(commits, index, path, content)
                 pending = {}
                 continue
         if unit.get('agent') and unit['agent'].get('amend') and commits:

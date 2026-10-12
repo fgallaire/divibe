@@ -106,6 +106,34 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(r.tags[0][3], 'Add a')
         self.assertEqual([(c[1], sorted(c[5])) for c in commits_of(units, {})[0]], [('Add a', ['a.py', 'b.py'])])
 
+    def test_a_rebase_a_conflict_stopped_squashes_when_it_goes_on(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('git add -A && git commit -q -m "Add a"')
+        s.write(self.p('b.py'), 'b\n')
+        s.bash('git add -A && git commit -q -m "Add b"')
+        s.write(self.p('a.py'), 'a2\n')
+        s.bash('git add -A && git commit -q --fixup=HEAD~1')
+        s.bash('git rebase -q --autosquash HEAD~3', error=True)
+        s.bash('git add a.py && git rebase --continue')
+        made = [(seconds('2026-01-01T10:12:30Z'), False, 'fixup! Add a', None)]
+        _, units = self.replay(s, made=made)
+        self.assertTrue(units[-1]['agent']['squashed'])
+
+    def test_a_rebase_aborted_squashes_nothing(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('git add -A && git commit -q -m "Add a"')
+        s.write(self.p('a.py'), 'a2\n')
+        s.bash('git add -A && git commit -q --fixup=HEAD')
+        s.bash('git rebase -q --autosquash HEAD~2', error=True)
+        s.bash('git rebase --abort && git rebase --continue')
+        made = [(seconds('2026-01-01T10:08:30Z'), False, 'fixup! Add a', None)]
+        _, units = self.replay(s, made=made)
+        self.assertEqual(units[-1]['agent'], {'message': 'fixup! Add a', 'amend': False})
+
     def test_a_file_removed_by_git_rm_leaves_the_next_commit(self):
         s = self.session()
         s.ask('work')

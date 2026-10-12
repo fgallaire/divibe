@@ -3,7 +3,8 @@ import os
 import tempfile
 import unittest
 
-from divibe.build import commits_of, history, moment, plan_dates, tags, tags_of, tree_files, version_of, write
+from divibe.build import (commits_of, history, merge3, moment, plan_dates, tags, tags_of, tree_files, version_of,
+                          write)
 
 
 def unit(uid, date, changes, request='r', agent=None):
@@ -126,6 +127,37 @@ class TagsTest(unittest.TestCase):
         self.assertEqual(version_of('Cargo.toml', '[package]\nname = "x"\nversion = "2.0.1"\n'), '2.0.1')
         self.assertIsNone(version_of('pyproject.toml', '[project]\nname = "x"\ndynamic = ["version"]\n'))
         self.assertIsNone(version_of('pyproject.toml', '[project]\nversion = "0.0.0"\n'))
+
+
+class FixupTest(unittest.TestCase):
+    def test_a_fixup_of_a_file_later_commits_changed_merges_into_each_of_them(self):
+        units = [
+            unit('1', '2026-01-01T10:00:00Z', {'R': 'intro\nold end\n'}, agent={'message': 'Start', 'amend': False}),
+            unit('2', '2026-01-01T10:02:00Z', {'L': 'MIT\n'}, agent={'message': 'Add the license', 'amend': False}),
+            unit('3', '2026-01-01T10:04:00Z', {'R': 'intro\nnew end\n'}, agent={'message': 'Reword', 'amend': False}),
+            unit('4', '2026-01-01T10:06:00Z', {'R': 'intro\nnew end\n\n## License\n'},
+                 agent={'message': 'fixup! Add the license', 'amend': False, 'squashed': True}),
+        ]
+        commits, _ = commits_of(units, {})
+        self.assertEqual([(c[1], c[5]) for c in commits], [
+            ('Start', {'R': 'intro\nold end\n'}),
+            ('Add the license', {'L': 'MIT\n', 'R': 'intro\nold end\n\n## License\n'}),
+            ('Reword', {'R': 'intro\nnew end\n\n## License\n'})])
+
+    def test_a_fixup_that_cannot_merge_goes_into_the_last_commit(self):
+        units = [
+            unit('1', '2026-01-01T10:00:00Z', {'R': 'a\nb\n'}, agent={'message': 'Start', 'amend': False}),
+            unit('2', '2026-01-01T10:02:00Z', {'R': 'a\nB\n'}, agent={'message': 'Change b', 'amend': False}),
+            unit('3', '2026-01-01T10:04:00Z', {'R': 'a\nbee\n'},
+                 agent={'message': 'fixup! Start', 'amend': False, 'squashed': True}),
+        ]
+        commits, _ = commits_of(units, {})
+        self.assertEqual([(c[1], c[5]) for c in commits], [('Start', {'R': 'a\nb\n'}), ('Change b', {'R': 'a\nbee\n'})])
+
+    def test_the_three_way_merge(self):
+        self.assertEqual(merge3('a\nb\nc\n', 'a\nB\nc\n', 'x\na\nb\nc\ny\n'), 'x\na\nB\nc\ny\n')
+        self.assertEqual(merge3('a\nb\n', 'z\na\nb\n', 'a\nb2\n'), 'z\na\nb2\n')
+        self.assertIsNone(merge3('a\nb\n', 'a\nB\n', 'a\nb2\n'))
 
 
 class DatesTest(unittest.TestCase):
