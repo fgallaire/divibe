@@ -106,8 +106,19 @@ commit is dated before its work, and no two share a second.
 - **Keep copies** of a project you cannot have the agent commit: each one is a
   point where the history is checked.
 
+## Safety
+
+Divibe runs none of the commands it reads, but one kind: a Python script the
+agent gave on standard input, run in Divibe's own process so that its
+changes land on the in-memory tree. While it runs, an audit hook refuses
+anything that would write a file, remove or rename one, start a program or
+open a connection, whichever function the script uses. A replay changes
+nothing on the machine; the only files Divibe writes are the new repository
+and its own state.
+
 ## Validation
 
 Divibe was written with Claude Code, committing as it went, and `divibe verify`
 rebuilds its history from the logs of that work: every commit identical in
-message and tree, dates within a second.
+message and tree, including one amended and a rewrite that removed compiled
+files committed by mistake, with dates within a second.
