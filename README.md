@@ -140,8 +140,9 @@ and its own state.
 Divibe was written with Claude Code, committing as it went, and `divibe verify`
 rebuilds its history from the logs of that work: every commit identical in
 message and tree, including amended ones, one by a command that failed after
-it, and a rewrite that removed compiled files committed by mistake, with the
-same dates to the second.
+it, fixups squashed into older commits, and a rewrite that removed compiled
+files committed by mistake, with the same dates to the second; and its tags
+on the same commits, those placed afterwards on older commits included.
 
 ## License
 
