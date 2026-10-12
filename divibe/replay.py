@@ -106,9 +106,12 @@ class Replay:
     at that moment, the current tree last. markers, a compiled pattern,
     finds in what the agent says the defect it moves to."""
 
-    def __init__(self, root, public, checkpoints=(), markers=None):
+    def __init__(self, root, public, checkpoints=(), markers=None, repository=True):
         self.root = root.rstrip('/')
         self.public = public
+        # a `git commit` in a folder that is no repository did nothing, even
+        # when a pipe hid its failure
+        self.repository = repository
         self.tree = Tree(self.root, Tracked())
         self.committed = {}
         self.units = []
@@ -248,7 +251,7 @@ class Replay:
                 if not failed:
                     # a failed command may have done part of its work, but
                     # which part is not known; a backup or a copy will say
-                    ops = git_operations(command, cwd or self.root, self.root)
+                    ops = git_operations(command, cwd or self.root, self.root) if self.repository else []
                     unknown = run_bash(self.tree, command, cwd or self.root)
                     if unknown:
                         self.stats['shell commands not replayed'] += len(unknown)

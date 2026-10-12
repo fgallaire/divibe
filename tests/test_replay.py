@@ -84,6 +84,18 @@ class ReplayTest(unittest.TestCase):
         _, units = self.replay(s)
         self.assertEqual([sorted(u['changes']) for u in units], [['a.py', 'b.py']])
 
+    def test_a_commit_in_a_project_that_is_no_repository_is_no_cut(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('git commit -am "nothing" | tail -1')
+        s.write(self.p('b.py'), 'b\n')
+        files = [s.save()]
+        events, ids = logs.load(files)
+        items = logs.timeline(events, self.project, {})
+        units = Replay(self.project, everything, repository=False).run(items, logs.lineages(ids), dict)
+        self.assertEqual([sorted(u['changes']) for u in units], [['a.py', 'b.py']])
+
     def test_a_failed_commit_is_no_cut(self):
         s = self.session()
         s.ask('work')

@@ -345,7 +345,8 @@ OPAQUE = {'perl', 'tee', 'awk', 'ed', 'patch', 'truncate', 'dd', 'rsync', 'tar',
           'eslint', 'black', 'ruff'}
 # what reads and runs tests without writing files anyone tracks
 QUIET = {'npm': {'test', 'run', 'view', 'ls', 'pack', 'whoami', 'outdated'}, 'npx': {'vitest', 'tsc', 'jest'},
-         'node': {'--test', '--version'}, 'python': {'--version'}, 'python3': {'--version'}}
+         'node': {'--test', '--version'}, 'python': {'--version'}, 'python3': {'--version'},
+         'pip': {'show', 'list', 'freeze', 'index', 'download'}}
 QUIET_MODULES = {'unittest', 'pytest', 'doctest', 'pydoc', 'json.tool', 'py_compile'}
 
 
