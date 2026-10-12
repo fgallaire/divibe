@@ -277,10 +277,13 @@ class Replay:
         if every:
             self.stage_all = True
         if commit and self.commit_files:
-            # a file the logs never describe, one a tool wrote (a lock file),
-            # is as git recorded it, at each commit
-            known = (set(self.tree.files) | set(self.committed)) - self.from_git
-            unseen = self.commit_files(commit, known)
+            # a file the logs never describe, one a tool wrote (a lock file)
+            # or one put back by a command they do not replay, is as git
+            # recorded it, at each commit; a file gone from the tree that
+            # the commit only kept stays gone
+            known = set(self.tree.files) - self.from_git
+            unseen = {p: c for p, c in self.commit_files(commit, known).items()
+                      if p in self.tree.files or c != self.committed.get(p)}
             for p, content in unseen.items():
                 self.tree.files[p] = content
                 self.staged.add(p)

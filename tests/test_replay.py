@@ -206,6 +206,30 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual([(u['agent']['message'], sorted(u['changes'])) for u in units],
                          [('Add a', ['a.py']), ('Add b', ['b.py']), ('Add c', ['c.py'])])
 
+    def test_a_file_put_back_from_outside_the_project_is_taken_from_git(self):
+        s = self.session()
+        s.ask('work')
+        s.write(self.p('img/logo.svg'), 'old\n')
+        s.write(self.p('a.py'), 'a\n')
+        s.bash('git add -A && git commit -q -m "Add the logo"')
+        # the logo taken out, then copied back from a folder the replay
+        # cannot see; a.py removed without git knowing
+        s.bash('rm -r img && rm a.py')
+        s.bash('cp ~/elsewhere/logo.svg img/logo.svg && git add img && git commit -q -m "Change the logo"')
+        made = [(seconds('2026-01-01T10:06:30Z'), False, 'Add the logo', 'h1'),
+                (seconds('2026-01-01T10:10:30Z'), False, 'Change the logo', 'h2')]
+        recorded = {'h1': {'img/logo.svg': 'old\n', 'a.py': 'a\n'}, 'h2': {'img/logo.svg': 'new\n', 'a.py': 'a\n'}}
+
+        def commit_files(commit, leave):
+            return {p: c for p, c in recorded[commit].items() if p not in leave}
+        files = [s.save()]
+        events, ids = logs.load(files)
+        items = logs.timeline(events, self.project, {})
+        r = Replay(self.project, everything, made=made, commit_files=commit_files)
+        units = r.run(items, logs.lineages(ids), dict)
+        self.assertEqual(units[1]['changes'], {'img/logo.svg': 'new\n'})
+        self.assertNotIn('a.py', r.tree.files)
+
     def test_a_file_a_tool_wrote_is_taken_from_the_commit_git_recorded(self):
         s = self.session()
         s.ask('package it')
