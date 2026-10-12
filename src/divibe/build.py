@@ -65,9 +65,10 @@ def commits_of(units, messages, draft=False):
         if message == '+':
             continue
         if unit.get('agent') and unit['agent'].get('amend') and commits:
-            key, _, _, group, fixed, changes = commits.pop()
+            # an amended commit keeps its author's date, as git keeps it
+            key, _, when, group, fixed, changes = commits.pop()
             changes.update(pending)
-            commits.append((key, message, moment(unit['date']), group, True, changes))
+            commits.append((key, message, when, group, True, changes))
         else:
             commits.append((unit['id'], message, moment(unit['date']), unit['request_id'],
                             bool(unit.get('agent')), dict(pending)))

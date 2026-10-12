@@ -47,6 +47,7 @@ class CommitsTest(unittest.TestCase):
         ]
         commits, _ = commits_of(units, {})
         self.assertEqual([(c[1], c[5]) for c in commits], [('Add a', {'a': 'a2'})])
+        self.assertEqual(commits[0][2], moment('2026-01-01T10:00:00Z'))
 
 
 class DatesTest(unittest.TestCase):
