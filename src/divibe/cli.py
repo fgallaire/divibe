@@ -1,4 +1,4 @@
-"""The command line: survey, units, messages, build, compare."""
+"""The command line: survey, units, messages, build, compare, verify."""
 import argparse
 import datetime
 import json
@@ -257,7 +257,9 @@ def verify(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='divibe', description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog='divibe',
+        description="A true git history for a project written with an AI agent, rebuilt from the agent's own records.")
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('survey', help='what the logs hold, and the quality to expect')
     common(p)

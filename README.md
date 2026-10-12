@@ -14,14 +14,19 @@ It never invents work. A commit holds what the logs show was changed, and
 the last commit is the project as it stands, checked file by file.
 
 ```sh
-python3 -m divibe survey PROJECT                  # what the logs hold, and the quality to expect
-python3 -m divibe units PROJECT --todo            # the units of work still needing a message
-python3 -m divibe messages PROJECT messages.tsv   # record them: RANK<TAB>MESSAGE per line
-python3 -m divibe build PROJECT --out REPO        # write the history into a new repository
-python3 -m divibe verify PROJECT                  # rebuild a git project's history and compare it with its own
+uv tool install git+https://github.com/fgallaire/divibe
+
+divibe survey PROJECT                  # what the logs hold, and the quality to expect
+divibe units PROJECT --todo            # the units of work still needing a message
+divibe messages PROJECT messages.tsv   # record them: RANK<TAB>MESSAGE per line
+divibe build PROJECT --out REPO        # write the history into a new repository
+divibe verify PROJECT                  # rebuild a git project's history and compare it with its own
 ```
 
-Python 3.10 or later, nothing to install. Divibe reads the logs and writes only
+Or once, without installing it: `uvx --from git+https://github.com/fgallaire/divibe divibe survey PROJECT`.
+From a clone, `uv run divibe` does the same.
+
+Python 3.10 or later, and no dependency. Divibe reads the logs and writes only
 the new repository and its own state, under `~/.cache/divibe/`.
 
 ## What the survey checks

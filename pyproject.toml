@@ -1,0 +1,26 @@
+[project]
+name = "divibe"
+version = "0.3.0"
+description = "A true git history for a project written with an AI agent, rebuilt from the agent's own records"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Florent Gallaire", email = "fgallaire@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["git", "history", "claude-code", "ai-agent"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.scripts]
+divibe = "divibe.cli:main"
+
+[project.urls]
+Repository = "https://github.com/fgallaire/divibe"
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"
