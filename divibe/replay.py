@@ -124,12 +124,16 @@ class Replay:
     # --- units ------------------------------------------------------------
 
     def start(self, session, moment, request, marker=None):
+        """A unit: a new request (marker None), or the same request going on
+        past a defect marker or a commit."""
         previous = self.current.get(session)
         if previous is not None and previous['paths']:
             self.end(previous)
+        same = marker is not None and previous is not None
         unit = {'id': f'{moment}/{session}' + (f'#{marker}' if marker else ''), 'session': session,
                 'start': moment, 'end': moment, 'request': request, 'marker': marker, 'paths': set(),
-                'notes': [], 'agent': None, 'unknown': []}
+                'notes': [], 'agent': None, 'unknown': [],
+                'request_id': previous['request_id'] if same else f'{moment}/{session}'}
         self.current[session] = unit
         return unit
 
@@ -157,6 +161,7 @@ class Replay:
             self.committed[p] = content
         self.units.append({
             'id': unit['id'], 'session': unit['session'], 'date': unit['end'], 'request': unit['request'],
+            'request_id': unit['request_id'],
             'summary': unit['notes'][-1] if unit['notes'] else '', 'marker': unit['marker'],
             'agent': unit['agent'], 'unknown': unit['unknown'], 'changes': changes, 'stat': stats})
 
@@ -199,7 +204,7 @@ class Replay:
         if differ:
             unit = {'id': f'{moment}/copy {name}', 'session': 'copy', 'start': moment, 'end': moment,
                     'request': f'the project as saved in {name}', 'marker': None, 'paths': set(differ),
-                    'notes': [], 'agent': None, 'unknown': []}
+                    'notes': [], 'agent': None, 'unknown': [], 'request_id': f'{moment}/copy {name}'}
             self.end(unit)
 
     def run(self, items, line, read_copy):
