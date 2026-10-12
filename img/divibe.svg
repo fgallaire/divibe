@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <!-- polished steel: dark edges, a bright line down the middle -->
+    <linearGradient id="chrome" x1="62.5" x2="65.5" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#57606a"/>
+      <stop offset="0.45" stop-color="#f6f8fa"/>
+      <stop offset="0.6" stop-color="#afb8c1"/>
+      <stop offset="1" stop-color="#424a53"/>
+    </linearGradient>
+  </defs>
+  <!-- what a diff takes away, slid down along the cut -->
+  <path d="M20 22H58V118H20A6 6 0 0 1 14 112V28A6 6 0 0 1 20 22Z" fill="#cf222e"/>
+  <rect x="23" y="66" width="26" height="8" rx="2" fill="#fff"/>
+  <!-- what it adds, slid up -->
+  <path d="M70 10H108A6 6 0 0 1 114 16V100A6 6 0 0 1 108 106H70Z" fill="#1a7f37"/>
+  <rect x="79" y="54" width="26" height="8" rx="2" fill="#fff"/>
+  <rect x="88" y="45" width="8" height="26" rx="2" fill="#fff"/>
+  <!-- the blade that cut it -->
+  <path d="M62.5 19 64 10 65.5 19V118H62.5Z" fill="url(#chrome)" stroke="#24292f" stroke-width="0.5"/>
+</svg>

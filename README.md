@@ -1,5 +1,7 @@
 # Divibe
 
+<p align="center"><img src="https://raw.githubusercontent.com/fgallaire/divibe/main/img/divibe.png" alt="Divibe" width="128"></p>
+
 **A true git history for a project written with an AI agent, rebuilt from the
 agent's own records.**
 
