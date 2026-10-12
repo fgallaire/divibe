@@ -30,6 +30,16 @@ class CommitsTest(unittest.TestCase):
         self.assertEqual(commits_of(units, {})[1], ['1'])
         self.assertEqual(commits_of(units, {}, draft=True)[0][0][1], 'Draft: fais le module')
 
+    def test_work_cut_off_before_a_commit_of_the_agent_goes_into_it(self):
+        units = [
+            unit('1', '2026-01-01T10:00:00Z', {'a': 'a'}),
+            unit('2', '2026-01-01T10:05:00Z', {'b': 'b'}, agent={'message': 'Add a and b', 'amend': False}),
+            unit('3', '2026-01-01T10:06:00Z', {'c': 'c'}),
+        ]
+        commits, missing = commits_of(units, {})
+        self.assertEqual([(c[1], c[5]) for c in commits], [('Add a and b', {'a': 'a', 'b': 'b'})])
+        self.assertEqual(missing, ['3'])
+
     def test_an_amend_folds_into_the_commit_before(self):
         units = [
             unit('1', '2026-01-01T10:00:00Z', {'a': 'a'}, agent={'message': 'Add a', 'amend': False}),

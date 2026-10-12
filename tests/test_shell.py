@@ -82,12 +82,14 @@ class ShellTest(unittest.TestCase):
     def test_commands_that_only_read_report_nothing(self):
         t = tree()
         for command in ('ls -la', 'git status', 'git log --oneline', 'npm test', 'grep -rn x . 2>/dev/null',
-                        'npx vitest run', 'cat a.py 2>&1', 'git commit -m "x"'):
+                        'npx vitest run', 'cat a.py 2>&1', 'git commit -m "x"', 'python3 -m unittest -q tests',
+                        'python3 -m pytest 2>&1 | tail -3'):
             self.assertEqual(run_bash(t, command, ROOT), [], command)
 
     def test_a_command_run_outside_the_project_reports_nothing(self):
         t = tree()
         self.assertEqual(run_bash(t, 'npm install', '/elsewhere'), [])
+        self.assertEqual(run_bash(t, 'cd /other && git cherry-pick --abort 2>/dev/null', ROOT), [])
 
 
 if __name__ == '__main__':

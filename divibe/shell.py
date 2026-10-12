@@ -343,8 +343,16 @@ GIT_WRITERS = {'checkout', 'switch', 'reset', 'restore', 'stash', 'apply', 'am',
 OPAQUE = {'perl', 'tee', 'awk', 'ed', 'patch', 'truncate', 'dd', 'rsync', 'tar', 'unzip', 'ln', 'make', 'cargo',
           'npm', 'npx', 'pnpm', 'yarn', 'bun', 'node', 'deno', 'python', 'python3', 'pip', 'uv', 'go', 'prettier',
           'eslint', 'black', 'ruff'}
-# what reads and runs without writing project files
-QUIET = {'npm': {'test', 'run', 'view', 'ls', 'pack', 'whoami', 'outdated'}, 'npx': {'vitest', 'tsc'}}
+# what reads and runs tests without writing files anyone tracks
+QUIET = {'npm': {'test', 'run', 'view', 'ls', 'pack', 'whoami', 'outdated'}, 'npx': {'vitest', 'tsc', 'jest'},
+         'node': {'--test', '--version'}, 'python': {'--version'}, 'python3': {'--version'}}
+QUIET_MODULES = {'unittest', 'pytest', 'doctest', 'pydoc', 'json.tool', 'py_compile'}
+
+
+def quiet(words):
+    if words[0] in ('python', 'python3') and words[1:2] == ['-m'] and len(words) > 2:
+        return words[2] in QUIET_MODULES
+    return len(words) > 1 and words[1] in QUIET.get(words[0], ())
 
 
 def run_bash(tree, command, cwd):
@@ -474,12 +482,12 @@ def run_bash(tree, command, cwd):
                         node = node.setdefault(k, {})
                     node[keys[-1]] = value
             tree.files['package.json'] = json.dumps(data, indent=2, ensure_ascii=False) + '\n'
-        elif tree.inside() or redirect is not None:
-            if redirect is not None and tree.rel(redirect) is not None and redirect != '/dev/null':
+        elif redirect is not None and tree.rel(redirect) is not None:
+            unknown.append(part)
+        elif tree.inside():
+            if head == 'git' and len(words) > 1 and words[1] in GIT_WRITERS:
                 unknown.append(part)
-            elif head == 'git' and len(words) > 1 and words[1] in GIT_WRITERS:
-                unknown.append(part)
-            elif head in OPAQUE and words[1:2] and words[1] not in QUIET.get(head, ()):
+            elif head in OPAQUE and len(words) > 1 and not quiet(words):
                 unknown.append(part)
     tree.cwd = cwd
     return unknown

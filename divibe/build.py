@@ -35,8 +35,17 @@ def commits_of(units, messages, draft=False):
     group, fixed, changes). Units with no message stop it, unless draft,
     which takes the first line of the request."""
     commits, pending, missing = [], {}, []
-    for unit in units:
+    # when the agent committed, its commits are the history: work cut off
+    # before one (a new request, a session that ended) goes into it
+    later_agent = [False] * len(units)
+    seen = False
+    for i in range(len(units) - 1, -1, -1):
+        later_agent[i] = seen
+        seen = seen or bool(units[i].get('agent'))
+    for index, unit in enumerate(units):
         message = message_of(unit, messages)
+        if message is None and later_agent[index]:
+            message = '+'
         if unit.get('agent') and unit['agent'].get('amend') and commits and message in (None, ''):
             message = commits[-1][1]
         if message is None:
