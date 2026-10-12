@@ -100,10 +100,11 @@ one, the pattern's first group being the defect.
 
 A commit is dated when its work ended. A commit the agent made keeps its own
 moment: the one git's reflog records, while it keeps it (90 days by default),
-else the moment the command started. The other commits of one request are spread out after their work,
-one and a half to five and a half minutes apart, as a person commits them one
-after the other, and all before the first commit of the next request. No
-commit is dated before its work, and no two share a second.
+else the moment the command started. The other commits of one request are
+spread out after their work, one and a half to five and a half minutes apart,
+as a person commits them one after the other, and all before the first commit
+of the next request. No commit is dated before its work, and no two share a
+second unless the agent made both in it.
 
 ## Tags
 

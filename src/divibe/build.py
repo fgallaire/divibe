@@ -9,7 +9,8 @@ made folds into the commit before it, and a `--fixup` commit a rebase with
 A commit is dated when its work ended. A commit the agent made keeps the
 moment it was made. The others of one request are spread out after their
 work, minutes apart as a person commits them one after the other, and
-before the first commit of the next request; no two commits share a second.
+before the first commit of the next request; no two commits share a second,
+unless the agent made both in it.
 
 A tag the agent made goes on the commit it named. A version file at the
 root (pyproject.toml, package.json, Cargo.toml) tags v<version> the commit
@@ -187,7 +188,8 @@ def plan_dates(commits):
                          for i, t in enumerate(times)]
         for i in range(len(times)):
             floor = times[i - 1] if i else last
-            if floor is not None and times[i] <= floor:
+            # the agent may make two commits in one second; no one else does
+            if floor is not None and (times[i] < floor or times[i] == floor and not group[i][4]):
                 times[i] = floor + SECOND
         for commit, when in zip(group, times):
             dates[commit[0]] = when

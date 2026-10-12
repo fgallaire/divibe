@@ -142,6 +142,14 @@ class DatesTest(unittest.TestCase):
         dates = plan_dates(commits)
         self.assertEqual(dates['b'], moment('2026-01-01T10:00:20Z'))
 
+    def test_two_commits_the_agent_made_in_one_second_keep_it(self):
+        commits = [self.commit('a', '2026-01-01T10:00:20Z', 'r1', fixed=True),
+                   self.commit('b', '2026-01-01T10:00:20Z', 'r1', fixed=True),
+                   self.commit('c', '2026-01-01T10:00:20Z', 'r1')]
+        dates = plan_dates(commits)
+        self.assertEqual([dates[k] for k in 'ab'], [moment('2026-01-01T10:00:20Z')] * 2)
+        self.assertGreater(dates['c'], dates['b'])
+
     def test_no_commit_is_dated_before_its_work(self):
         commits = [self.commit('a', '2026-01-01T10:00:00Z', 'r1'), self.commit('b', '2026-01-01T11:00:00Z', 'r1')]
         dates = plan_dates(commits)
